@@ -1,6 +1,6 @@
 # CMPE-131-Term-Project  
 ## Name of Application:
-**Secure E2EE Web Messaging App**  
+**ThreadSafe: A Secure E2EE Web Messaging Application**  
 
 ## Overview:
 A secure, scalable messaging platform implementing true end-to-end encryption (E2EE) for plaintext and image messaging, both 1-to-1 and group chat conversations. Group chats have role status permission control and settings based around profile editing and notifications. Messages also have receipt status, and contacts management with adding, removing, and editing other friend users. Built with Flask backend and modern web frontend, this application ensures message privacy through advanced cryptographic protocols that include Elliptic Curve Cryptography (ECC), AES-256 symmetric encryption, and the Double Ratchet algorithm for perfect forward secrecy.
