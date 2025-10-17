@@ -7,7 +7,7 @@ A secure, scalable messaging platform implementing true end-to-end encryption (E
 
 ## Key Features:
     
-- **Military-Grade Encryption:** Utilizes ECC for asymmetric keys and AES-256 symmetric encryption with HMAC verification
+- **Advanced Encryption:** Utilizes ECC for asymmetric keys and AES-256 symmetric encryption with HMAC verification
 - **Double Ratchet Protocol:** Provides perfect forward secrecy and break-in recovery for one-on-one chats
 - **Secure Group Messaging:** A dedicated key server generates ephemeral symmetric keys for group communications
 - **Message Persistence Controls:** Auto-deletion features (3 days for one-on-one chats, 24 hours for group chats) with client-side backup and restore options
@@ -43,7 +43,7 @@ docker-compose up
    ```
 3. Set up virtual environment: 
    ```bash
-   python -m venv venv
+   python3 -m venv venv
    ```
 4. Activate virtual environment:
    - Windows: 
