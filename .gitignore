@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.Python
+.venv/
+venv/
+ENV/
+.env
+.env.*
+*.sqlite3
+instance/*.db
+instance/*.sqlite
+
+# Flask / coverage / logs
+*.log
+.coverage
+htmlcov/
+.cache/
+.pytest_cache/
+
+# Node/Vite
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.eslintcache
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# OS
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db
+
+# Containers
+*.pid
