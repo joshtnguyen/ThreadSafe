@@ -79,9 +79,8 @@ docker-compose up
 
 ### Front-end Setup
 - The frontend is served directly by the Flask backend
-- Static files are located in `/frontend/static/`
-- Templates are located in `/frontend/templates/`
-- No additional build process is required
+- cd into /frontend then run `npm install`
+- then run `npm run dev`
 
 ## Key Features Testing
 ### Encryption Protocol Validation
