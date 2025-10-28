@@ -46,22 +46,22 @@ export default function RegisterPage() {
         </div>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label className="field">
-            <span className="field-label">Display name</span>
+            <span className="field-label">Account User's Name</span>
             <input
               name="displayName"
               value={form.displayName}
               onChange={handleChange}
-              placeholder="Display name"
+              placeholder="Your full name"
               autoComplete="name"
             />
           </label>
           <label className="field">
-            <span className="field-label">Username</span>
+            <span className="field-label">Username (case-sensitive)</span>
             <input
               name="username"
               value={form.username}
               onChange={handleChange}
-              placeholder="Username"
+              placeholder="Username (case matters: alice ≠ Alice)"
               autoComplete="username"
               required
             />

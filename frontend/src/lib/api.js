@@ -50,6 +50,13 @@ export const api = {
       body: { content },
     }),
   friends: (token) => request("/friends", { token }),
+  friendRequests: (token) => request("/friends/requests", { token }),
   addFriend: (token, username) =>
     request("/friends", { method: "POST", token, body: { username } }),
+  acceptFriendRequest: (token, requesterId) =>
+    request(`/friends/requests/${requesterId}/accept`, { method: "POST", token }),
+  rejectFriendRequest: (token, requesterId) =>
+    request(`/friends/requests/${requesterId}/reject`, { method: "DELETE", token }),
+  deleteFriend: (token, friendId) =>
+    request(`/friends/${friendId}`, { method: "DELETE", token }),
 };

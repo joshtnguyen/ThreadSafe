@@ -215,8 +215,8 @@ class Contact(db.Model):
         nullable=False,
     )
     contactStatus = db.Column(
-        db.String(20), default="Active", index=True
-    )  # 'Active' or 'Blocked'
+        db.String(20), default="Pending", index=True
+    )  # 'Pending', 'Accepted', or 'Blocked'
     added_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Relationships

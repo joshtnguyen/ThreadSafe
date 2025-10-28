@@ -43,12 +43,12 @@ export default function LoginPage() {
         </div>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label className="field">
-            <span className="field-label">Username</span>
+            <span className="field-label">Username or Email</span>
             <input
               name="username"
               value={form.username}
               onChange={handleChange}
-              placeholder="Username"
+              placeholder="Username (case-sensitive) or email"
               autoComplete="username"
               required
             />

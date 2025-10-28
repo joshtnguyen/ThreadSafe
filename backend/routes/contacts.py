@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
+from sqlalchemy import func
 
 from ..database import db
 from ..models import Contact, User
@@ -17,20 +18,20 @@ def _safe_identity() -> int:
 @friends_bp.get("")
 @jwt_required()
 def list_friends():
-    """Return the authenticated user's confirmed friends."""
+    """Return the authenticated user's confirmed friends (Accepted status only)."""
     current_user_id = _safe_identity()
     user = User.query.get(current_user_id)
     if not user:
         return jsonify({"message": "User not found."}), 404
 
-    # Get active contacts only
+    # Get accepted contacts only
     friends = [
         contact.contact_user.to_dict()
         for contact in sorted(
             user.contacts,
             key=lambda entry: entry.contact_user.username.lower()
         )
-        if contact.contactStatus == "Active"
+        if contact.contactStatus == "Accepted"
     ]
 
     return (
@@ -39,37 +40,228 @@ def list_friends():
     )
 
 
+@friends_bp.get("/requests")
+@jwt_required()
+def list_friend_requests():
+    """Return pending friend requests (incoming and outgoing)."""
+    current_user_id = _safe_identity()
+
+    # Incoming requests: where I am the contact_userID and status is Pending
+    incoming = Contact.query.filter_by(
+        contact_userID=current_user_id,
+        contactStatus="Pending"
+    ).all()
+
+    # Outgoing requests: where I am the userID and status is Pending
+    outgoing = Contact.query.filter_by(
+        userID=current_user_id,
+        contactStatus="Pending"
+    ).all()
+
+    return jsonify({
+        "incoming": [
+            {
+                "requestId": req.userID,  # The ID of the requester
+                "user": req.user.to_dict(),
+                "addedAt": req.added_at.isoformat() if req.added_at else None,
+            }
+            for req in incoming
+        ],
+        "outgoing": [
+            {
+                "requestId": req.contact_userID,
+                "user": req.contact_user.to_dict(),
+                "addedAt": req.added_at.isoformat() if req.added_at else None,
+            }
+            for req in outgoing
+        ],
+    }), 200
+
+
 @friends_bp.post("")
 @jwt_required()
 def add_friend():
-    """Add another user as a friend (creates a mutual connection)."""
+    """Send a friend request by username or email (creates pending request)."""
     current_user_id = _safe_identity()
     payload = request.get_json(silent=True) or {}
-    username = (payload.get("username") or "").strip().lower()
+    identifier = (payload.get("username") or "").strip()
 
-    if not username:
-        return jsonify({"message": "username is required."}), 400
+    if not identifier:
+        return jsonify({"message": "Username or email is required."}), 400
 
     current_user = User.query.get(current_user_id)
-    target_user = User.query.filter_by(username=username).first()
+    if not current_user:
+        return jsonify({"message": "User not found."}), 404
 
-    if not current_user or not target_user:
+    # Try to find user by exact username (case-SENSITIVE), then by email (case-insensitive)
+    target_user = User.query.filter_by(username=identifier).first()
+    if not target_user:
+        target_user = User.query.filter(func.lower(User.email) == identifier.lower()).first()
+
+    if not target_user:
         return jsonify({"message": "User not found."}), 404
     if target_user.userID == current_user.userID:
         return jsonify({"message": "You cannot add yourself."}), 400
 
-    existing = Contact.query.filter_by(
+    # Check if already friends or request exists
+    existing_sent = Contact.query.filter_by(
         userID=current_user.userID, contact_userID=target_user.userID
     ).first()
-    if existing:
-        return jsonify({"friend": target_user.to_dict(), "status": "already_friends"}), 200
 
-    db.session.add_all(
-        [
-            Contact(userID=current_user.userID, contact_userID=target_user.userID, contactStatus="Active"),
-            Contact(userID=target_user.userID, contact_userID=current_user.userID, contactStatus="Active"),
-        ]
+    existing_received = Contact.query.filter_by(
+        userID=target_user.userID, contact_userID=current_user.userID
+    ).first()
+
+    # If they sent us a request, accept it automatically (mutual interest)
+    if existing_received and existing_received.contactStatus == "Pending":
+        # Accept their request
+        existing_received.contactStatus = "Accepted"
+        # Create our side as accepted
+        if not existing_sent:
+            new_contact = Contact(
+                userID=current_user.userID,
+                contact_userID=target_user.userID,
+                contactStatus="Accepted"
+            )
+            db.session.add(new_contact)
+        else:
+            existing_sent.contactStatus = "Accepted"
+
+        db.session.commit()
+        return jsonify({
+            "friend": target_user.to_dict(),
+            "status": "accepted",
+            "message": "Friend request accepted (mutual)."
+        }), 201
+
+    # If we already sent a request
+    if existing_sent:
+        if existing_sent.contactStatus == "Accepted":
+            return jsonify({"message": "Already friends.", "status": "accepted"}), 200
+        elif existing_sent.contactStatus == "Pending":
+            return jsonify({"message": "Friend request already sent.", "status": "pending"}), 200
+        elif existing_sent.contactStatus == "Blocked":
+            return jsonify({"message": "Cannot send request."}), 403
+
+    # Create new pending friend request (one-way)
+    new_request = Contact(
+        userID=current_user.userID,
+        contact_userID=target_user.userID,
+        contactStatus="Pending"
     )
+    db.session.add(new_request)
     db.session.commit()
 
-    return jsonify({"friend": target_user.to_dict()}), 201
+    return jsonify({
+        "friend": target_user.to_dict(),
+        "status": "pending",
+        "message": "Friend request sent."
+    }), 201
+
+
+@friends_bp.post("/requests/<int:requester_id>/accept")
+@jwt_required()
+def accept_friend_request(requester_id: int):
+    """Accept a friend request."""
+    current_user_id = _safe_identity()
+
+    if requester_id == current_user_id:
+        return jsonify({"message": "Invalid request."}), 400
+
+    # Find the pending request from requester to current user
+    request_record = Contact.query.filter_by(
+        userID=requester_id,
+        contact_userID=current_user_id,
+        contactStatus="Pending"
+    ).first()
+
+    if not request_record:
+        return jsonify({"message": "Friend request not found."}), 404
+
+    # Update request to Accepted
+    request_record.contactStatus = "Accepted"
+
+    # Create reverse connection (also Accepted)
+    reverse = Contact.query.filter_by(
+        userID=current_user_id,
+        contact_userID=requester_id
+    ).first()
+
+    if reverse:
+        reverse.contactStatus = "Accepted"
+    else:
+        reverse = Contact(
+            userID=current_user_id,
+            contact_userID=requester_id,
+            contactStatus="Accepted"
+        )
+        db.session.add(reverse)
+
+    db.session.commit()
+
+    requester = User.query.get(requester_id)
+    return jsonify({
+        "friend": requester.to_dict() if requester else None,
+        "message": "Friend request accepted."
+    }), 200
+
+
+@friends_bp.delete("/requests/<int:requester_id>/reject")
+@jwt_required()
+def reject_friend_request(requester_id: int):
+    """Reject/cancel a friend request."""
+    current_user_id = _safe_identity()
+
+    if requester_id == current_user_id:
+        return jsonify({"message": "Invalid request."}), 400
+
+    # Find the pending request
+    request_record = Contact.query.filter_by(
+        userID=requester_id,
+        contact_userID=current_user_id,
+        contactStatus="Pending"
+    ).first()
+
+    if not request_record:
+        return jsonify({"message": "Friend request not found."}), 404
+
+    db.session.delete(request_record)
+    db.session.commit()
+
+    return jsonify({"message": "Friend request rejected."}), 200
+
+
+@friends_bp.delete("/<int:friend_id>")
+@jwt_required()
+def delete_friend(friend_id: int):
+    """Remove a friend (deletes mutual connection, but messages remain)."""
+    current_user_id = _safe_identity()
+
+    current_user = User.query.get(current_user_id)
+    friend_user = User.query.get(friend_id)
+
+    if not current_user or not friend_user:
+        return jsonify({"message": "User not found."}), 404
+
+    if friend_id == current_user_id:
+        return jsonify({"message": "You cannot delete yourself."}), 400
+
+    # Delete both sides of the friendship
+    contact1 = Contact.query.filter_by(
+        userID=current_user_id, contact_userID=friend_id
+    ).first()
+    contact2 = Contact.query.filter_by(
+        userID=friend_id, contact_userID=current_user_id
+    ).first()
+
+    if not contact1 and not contact2:
+        return jsonify({"message": "Not friends."}), 404
+
+    if contact1:
+        db.session.delete(contact1)
+    if contact2:
+        db.session.delete(contact2)
+
+    db.session.commit()
+
+    return jsonify({"message": "Friend removed successfully."}), 200

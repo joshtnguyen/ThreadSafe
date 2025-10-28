@@ -4,7 +4,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 
 from ..database import db
 from ..models import Contact, Message, User
@@ -75,34 +75,38 @@ def list_conversations():
 @conversations_bp.post("")
 @jwt_required()
 def create_conversation():
-    """Create/open a direct conversation with another user by username."""
+    """Create/open a direct conversation with another user by username or email."""
     current_user_id = _current_user_id()
     payload = request.get_json(silent=True) or {}
-    target_username = (payload.get("username") or "").strip().lower()
+    identifier = (payload.get("username") or "").strip()
 
-    if not target_username:
-        return jsonify({"message": "username is required."}), 400
+    if not identifier:
+        return jsonify({"message": "Username or email is required."}), 400
 
     current_user = User.query.get(current_user_id)
     if not current_user:
         return jsonify({"message": "User not found."}), 404
 
-    target_user = User.query.filter_by(username=target_username).first()
+    # Try to find user by exact username (case-SENSITIVE), then by email (case-insensitive)
+    target_user = User.query.filter_by(username=identifier).first()
+    if not target_user:
+        target_user = User.query.filter(func.lower(User.email) == identifier.lower()).first()
+
     if not target_user:
         return jsonify({"message": "User not found."}), 404
 
     if target_user.userID == current_user_id:
         return jsonify({"message": "Cannot start a conversation with yourself."}), 400
 
-    # Check if they are contacts
+    # Check if they are accepted friends (mutual)
     contact = Contact.query.filter_by(
         userID=current_user_id,
         contact_userID=target_user.userID
     ).first()
 
-    if not contact or contact.contactStatus != "Active":
+    if not contact or contact.contactStatus != "Accepted":
         return (
-            jsonify({"message": "Add this user as a friend before starting a chat."}),
+            jsonify({"message": "You must be friends to start a conversation."}),
             403,
         )
 
@@ -220,8 +224,8 @@ def create_message(conversation_id: int):
         contact_userID=conversation_id
     ).first()
 
-    if not contact or contact.contactStatus != "Active":
-        return jsonify({"message": "Not an active contact."}), 403
+    if not contact or contact.contactStatus != "Accepted":
+        return jsonify({"message": "You must be friends to send messages."}), 403
 
     payload = request.get_json(silent=True) or {}
     content = (payload.get("content") or "").strip()

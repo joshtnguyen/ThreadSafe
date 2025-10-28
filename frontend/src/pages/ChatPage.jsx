@@ -13,6 +13,7 @@ export default function ChatPage() {
 
   const [conversations, setConversations] = useState([]);
   const [friends, setFriends] = useState([]);
+  const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [messageDraft, setMessageDraft] = useState("");
@@ -22,6 +23,7 @@ export default function ChatPage() {
   const [isSending, setIsSending] = useState(false);
   const [isAddingFriend, setIsAddingFriend] = useState(false);
   const [isOpeningChat, setIsOpeningChat] = useState(false);
+  const [friendMenuOpen, setFriendMenuOpen] = useState(null);
 
   const messageEndRef = useRef(null);
 
@@ -36,18 +38,23 @@ export default function ChatPage() {
       try {
         setFeedback("");
         setIsLoading(true);
-        const [conversationResponse, friendResponse] = await Promise.all([
+        const [conversationResponse, friendResponse, requestsResponse] = await Promise.all([
           api.conversations(token),
           api.friends(token),
+          api.friendRequests(token),
         ]);
         if (!isMounted) {
           return;
         }
         setConversations(conversationResponse.conversations ?? []);
         const orderedFriends = (friendResponse.friends ?? []).sort((a, b) =>
-          (a.displayName || a.username).localeCompare(b.displayName || b.username),
+          a.username.localeCompare(b.username),
         );
         setFriends(orderedFriends);
+        setFriendRequests({
+          incoming: requestsResponse.incoming ?? [],
+          outgoing: requestsResponse.outgoing ?? [],
+        });
         if (conversationResponse.conversations?.length) {
           setSelectedId(conversationResponse.conversations[0].id);
         }
@@ -95,6 +102,16 @@ export default function ChatPage() {
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    const handleClickOutside = () => {
+      if (friendMenuOpen !== null) {
+        setFriendMenuOpen(null);
+      }
+    };
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
+  }, [friendMenuOpen]);
 
   const handleSendMessage = async (event) => {
     event.preventDefault();
@@ -160,20 +177,83 @@ export default function ChatPage() {
     try {
       const response = await api.addFriend(token, addFriendUsername.trim());
       const friend = response.friend;
-      setFriends((previous) => {
-        const exists = previous.some((entry) => entry.id === friend.id);
-        if (exists) {
-          return previous;
-        }
-        return [...previous, friend].sort((a, b) =>
-          (a.displayName || a.username).localeCompare(b.displayName || b.username),
-        );
-      });
+      const status = response.status;
+
+      if (status === "accepted") {
+        // Automatically accepted (mutual request) - add to friends list
+        setFriends((previous) => {
+          const exists = previous.some((entry) => entry.id === friend.id);
+          if (exists) return previous;
+          return [...previous, friend].sort((a, b) => a.username.localeCompare(b.username));
+        });
+        setFeedback(`✓ ${response.message || "Now friends!"}`);
+      } else if (status === "pending") {
+        // Request sent - add to outgoing requests
+        setFriendRequests((prev) => ({
+          ...prev,
+          outgoing: [...prev.outgoing, { requestId: friend.id, user: friend }],
+        }));
+        setFeedback(`✓ ${response.message || "Friend request sent."}`);
+      }
       setAddFriendUsername("");
     } catch (error) {
       setFeedback(error.message);
     } finally {
       setIsAddingFriend(false);
+    }
+  };
+
+  const handleAcceptRequest = async (requesterId) => {
+    setFeedback("");
+    try {
+      const response = await api.acceptFriendRequest(token, requesterId);
+      const newFriend = response.friend;
+      // Remove from incoming requests
+      setFriendRequests((prev) => ({
+        ...prev,
+        incoming: prev.incoming.filter((req) => req.requestId !== requesterId),
+      }));
+      // Add to friends list
+      setFriends((previous) => {
+        const exists = previous.some((entry) => entry.id === newFriend.id);
+        if (exists) return previous;
+        return [...previous, newFriend].sort((a, b) => a.username.localeCompare(b.username));
+      });
+      setFeedback(`✓ ${response.message || "Friend request accepted!"}`);
+    } catch (error) {
+      setFeedback(error.message);
+    }
+  };
+
+  const handleRejectRequest = async (requesterId) => {
+    setFeedback("");
+    try {
+      await api.rejectFriendRequest(token, requesterId);
+      // Remove from incoming requests
+      setFriendRequests((prev) => ({
+        ...prev,
+        incoming: prev.incoming.filter((req) => req.requestId !== requesterId),
+      }));
+      setFeedback("✓ Friend request rejected.");
+    } catch (error) {
+      setFeedback(error.message);
+    }
+  };
+
+  const handleDeleteFriend = async (friendId) => {
+    setFeedback("");
+    try {
+      await api.deleteFriend(token, friendId);
+      setFriends((previous) => previous.filter((friend) => friend.id !== friendId));
+      setFriendMenuOpen(null);
+      // If we had a conversation with this friend selected, clear it
+      if (selectedId === friendId) {
+        setSelectedId(null);
+        setMessages([]);
+      }
+      setFeedback("✓ Friend removed. Chat history preserved.");
+    } catch (error) {
+      setFeedback(error.message);
     }
   };
 
@@ -189,40 +269,179 @@ export default function ChatPage() {
             </div>
           </div>
           <nav className="sidebar-nav">
+            {friendRequests.incoming.length > 0 && (
+              <div className="nav-section" style={{ marginBottom: "16px" }}>
+                <p className="nav-title">
+                  Friend Requests ({friendRequests.incoming.length})
+                </p>
+                <div className="nav-list">
+                  {friendRequests.incoming.map((request) => (
+                    <div
+                      key={request.requestId}
+                      style={{
+                        padding: "8px 12px",
+                        borderBottom: "1px solid #eee",
+                      }}
+                    >
+                      <div style={{ marginBottom: "8px", fontWeight: "500" }}>
+                        {request.user.username}
+                      </div>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <button
+                          type="button"
+                          onClick={() => handleAcceptRequest(request.requestId)}
+                          style={{
+                            flex: 1,
+                            padding: "6px 12px",
+                            backgroundColor: "#4CAF50",
+                            color: "white",
+                            border: "none",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            fontSize: "12px",
+                          }}
+                        >
+                          Accept
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRejectRequest(request.requestId)}
+                          style={{
+                            flex: 1,
+                            padding: "6px 12px",
+                            backgroundColor: "#f44336",
+                            color: "white",
+                            border: "none",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            fontSize: "12px",
+                          }}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="nav-section">
               <p className="nav-title">Friends</p>
               <div className="nav-list">
                 {friends.length ? (
                   friends.map((friend) => (
-                    <button
-                      key={friend.id}
-                      type="button"
-                      className="nav-item"
-                      onClick={() => startConversationWith(friend.username)}
-                      disabled={isOpeningChat}
-                    >
-                      <span className="nav-avatar">
-                        {(friend.displayName || friend.username)
-                          .charAt(0)
-                          .toUpperCase()}
-                      </span>
-                      <span className="nav-label">
-                        {friend.displayName || friend.username}
-                      </span>
-                    </button>
+                    <div key={friend.id} style={{ position: "relative" }}>
+                      <button
+                        type="button"
+                        className="nav-item"
+                        onClick={() => startConversationWith(friend.username)}
+                        disabled={isOpeningChat}
+                        style={{ paddingRight: "40px" }}
+                      >
+                        <span className="nav-avatar">
+                          {friend.username.charAt(0).toUpperCase()}
+                        </span>
+                        <span className="nav-label">
+                          {friend.username}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFriendMenuOpen(friendMenuOpen === friend.id ? null : friend.id);
+                        }}
+                        style={{
+                          position: "absolute",
+                          right: "8px",
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: "18px",
+                          padding: "4px 8px",
+                          color: "#666",
+                        }}
+                      >
+                        ⋮
+                      </button>
+                      {friendMenuOpen === friend.id && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            right: "8px",
+                            top: "100%",
+                            backgroundColor: "white",
+                            border: "1px solid #ddd",
+                            borderRadius: "4px",
+                            boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                            zIndex: 1000,
+                            minWidth: "120px",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`Remove ${friend.username} from friends?`)) {
+                                handleDeleteFriend(friend.id);
+                              }
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "8px 12px",
+                              border: "none",
+                              background: "transparent",
+                              textAlign: "left",
+                              cursor: "pointer",
+                              color: "#d32f2f",
+                            }}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = "#f5f5f5"}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = "transparent"}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   ))
                 ) : (
                   <p className="nav-empty">No friends yet</p>
                 )}
               </div>
             </div>
+            {friendRequests.outgoing.length > 0 && (
+              <div className="nav-section" style={{ marginTop: "8px" }}>
+                <p className="nav-title" style={{ fontSize: "12px", color: "#666" }}>
+                  Pending ({friendRequests.outgoing.length})
+                </p>
+                <div className="nav-list">
+                  {friendRequests.outgoing.map((request) => (
+                    <div
+                      key={request.requestId}
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: "13px",
+                        color: "#999",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
+                      <span>{request.user.username}</span>
+                      <span style={{ fontSize: "11px" }}>⏳ Pending</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </nav>
           <form className="sidebar-start-chat" onSubmit={handleAddFriend}>
             <label className="field ghost">
-              <span className="field-label">Add friend by username</span>
+              <span className="field-label">Add friend</span>
               <input
                 name="addFriend"
-                placeholder="Enter username"
+                placeholder="Username (case-sensitive) or email"
                 value={addFriendUsername}
                 onChange={(event) => setAddFriendUsername(event.target.value)}
               />
@@ -293,7 +512,7 @@ export default function ChatPage() {
                     className={`message-bubble ${message.isOwn ? "own" : "their"}`}
                   >
                     <span className="bubble-meta">
-                      {message.isOwn ? "You" : message.sender.displayName}
+                      {message.isOwn ? "You" : message.sender.username}
                     </span>
                     <p className="bubble-text">{message.content}</p>
                     <time className="bubble-time">{formatTime(message.sentAt)}</time>
