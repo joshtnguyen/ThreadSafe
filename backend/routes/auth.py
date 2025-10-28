@@ -19,27 +19,31 @@ def register():
     """Register a new user."""
     payload = request.get_json(silent=True) or {}
     username = payload.get("username", "").strip()
+    email = payload.get("email", "").strip()
     password = payload.get("password", "")
-    display_name = payload.get("displayName") or username
 
-    if not username or not password:
-        return jsonify({"message": "Username and password are required."}), 400
+    if not username or not password or not email:
+        return jsonify({"message": "Username, email, and password are required."}), 400
 
     normalised = _normalise_username(username)
+    normalised_email = email.lower()
 
     if User.query.filter_by(username=normalised).first():
         return jsonify({"message": "Username already exists."}), 409
 
+    if User.query.filter_by(email=normalised_email).first():
+        return jsonify({"message": "Email already exists."}), 409
+
     user = User(
         username=normalised,
-        display_name=display_name.strip() or normalised,
-        password_hash=generate_password_hash(password, method="pbkdf2:sha256"),
+        email=normalised_email,
+        password=generate_password_hash(password, method="pbkdf2:sha256"),
     )
 
     db.session.add(user)
     db.session.commit()
 
-    token = create_access_token(identity=str(user.id))
+    token = create_access_token(identity=str(user.userID))
 
     return (
         jsonify(
@@ -64,10 +68,10 @@ def login():
 
     normalised = _normalise_username(username)
     user = User.query.filter_by(username=normalised).first()
-    if not user or not check_password_hash(user.password_hash, password):
+    if not user or not check_password_hash(user.password, password):
         return jsonify({"message": "Invalid credentials."}), 401
 
-    token = create_access_token(identity=str(user.id))
+    token = create_access_token(identity=str(user.userID))
 
     return jsonify({"accessToken": token, "user": user.to_dict()}), 200
 

@@ -10,6 +10,7 @@ export default function RegisterPage() {
 
   const [form, setForm] = useState({
     username: "",
+    email: "",
     password: "",
     displayName: "",
   });
@@ -62,6 +63,18 @@ export default function RegisterPage() {
               onChange={handleChange}
               placeholder="Username"
               autoComplete="username"
+              required
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">Email</span>
+            <input
+              type="email"
+              name="email"
+              value={form.email}
+              onChange={handleChange}
+              placeholder="Email address"
+              autoComplete="email"
               required
             />
           </label>

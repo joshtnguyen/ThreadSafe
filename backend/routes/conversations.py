@@ -4,15 +4,10 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
+from sqlalchemy import and_, or_
 
 from ..database import db
-from ..models import (
-    Conversation,
-    ConversationParticipant,
-    Friendship,
-    Message,
-    User,
-)
+from ..models import Contact, Message, User
 
 conversations_bp = Blueprint("conversations", __name__)
 
@@ -21,73 +16,69 @@ def _current_user_id() -> int:
     return int(get_jwt_identity())
 
 
-def _find_or_create_direct_conversation(
-    current_user: User, target_user: User
-) -> Conversation:
-    """Return an existing direct conversation between two users or create one."""
-    for participant in current_user.conversations:
-        conversation = participant.conversation
-        participant_ids = {p.user_id for p in conversation.participants}
-        if participant_ids == {current_user.id, target_user.id}:
-            return conversation
-
-    conversation = Conversation()
-    db.session.add(conversation)
-    db.session.flush()  # Populate conversation.id
-
-    db.session.add_all(
-        [
-            ConversationParticipant(conversation_id=conversation.id, user_id=current_user.id),
-            ConversationParticipant(conversation_id=conversation.id, user_id=target_user.id),
-        ]
-    )
-    return conversation
-
-
-def _conversation_or_404(conversation_id: int, current_user_id: int) -> Conversation:
-    conversation = Conversation.query.get(conversation_id)
-    if not conversation:
-        return None
-
-    if current_user_id not in {p.user_id for p in conversation.participants}:
-        return None
-
-    return conversation
-
-
 @conversations_bp.get("")
 @jwt_required()
 def list_conversations():
-    """Return conversations for the authenticated user."""
+    """Return conversations (unique contacts with messages) for the authenticated user."""
     current_user_id = _current_user_id()
-    conversations = (
-        Conversation.query.join(ConversationParticipant)
-        .filter(ConversationParticipant.user_id == current_user_id)
-        .order_by(Conversation.updated_at.desc())
-        .all()
+
+    # Get all users the current user has exchanged messages with
+    sent_to = db.session.query(Message.receiverID).filter(
+        Message.senderID == current_user_id,
+        Message.receiverID.isnot(None)
+    ).distinct()
+
+    received_from = db.session.query(Message.senderID).filter(
+        Message.receiverID == current_user_id
+    ).distinct()
+
+    # Combine both sets
+    contact_ids = set()
+    for row in sent_to:
+        if row[0]:
+            contact_ids.add(row[0])
+    for row in received_from:
+        if row[0]:
+            contact_ids.add(row[0])
+
+    conversations = []
+    for contact_id in contact_ids:
+        contact_user = User.query.get(contact_id)
+        if not contact_user:
+            continue
+
+        # Get last message between these two users
+        last_message = Message.query.filter(
+            or_(
+                and_(Message.senderID == current_user_id, Message.receiverID == contact_id),
+                and_(Message.senderID == contact_id, Message.receiverID == current_user_id)
+            )
+        ).order_by(Message.timeStamp.desc()).first()
+
+        conversations.append({
+            "id": contact_id,  # Using contact's userID as conversation ID
+            "name": contact_user.username,
+            "participants": [contact_user.to_dict()],
+            "lastMessage": last_message.to_dict(current_user_id) if last_message else None,
+            "updatedAt": last_message.timeStamp.isoformat() if last_message else None,
+        })
+
+    # Sort by last message timestamp
+    conversations.sort(
+        key=lambda c: c["updatedAt"] if c["updatedAt"] else "",
+        reverse=True
     )
 
-    return (
-        jsonify(
-            {
-                "conversations": [
-                    conversation.to_summary(current_user_id)
-                    for conversation in conversations
-                ]
-            }
-        ),
-        200,
-    )
+    return jsonify({"conversations": conversations}), 200
 
 
 @conversations_bp.post("")
 @jwt_required()
 def create_conversation():
-    """Create a direct conversation with another user by username."""
+    """Create/open a direct conversation with another user by username."""
     current_user_id = _current_user_id()
     payload = request.get_json(silent=True) or {}
-    target_username_raw = (payload.get("username") or "").strip()
-    target_username = target_username_raw.lower()
+    target_username = (payload.get("username") or "").strip().lower()
 
     if not target_username:
         return jsonify({"message": "username is required."}), 400
@@ -95,78 +86,142 @@ def create_conversation():
     current_user = User.query.get(current_user_id)
     if not current_user:
         return jsonify({"message": "User not found."}), 404
-    target_user = User.query.filter_by(username=target_username).first()
 
+    target_user = User.query.filter_by(username=target_username).first()
     if not target_user:
         return jsonify({"message": "User not found."}), 404
-    if target_user.id == current_user_id:
+
+    if target_user.userID == current_user_id:
         return jsonify({"message": "Cannot start a conversation with yourself."}), 400
-    if not Friendship.query.filter_by(
-        user_id=current_user_id, friend_id=target_user.id
-    ).first():
+
+    # Check if they are contacts
+    contact = Contact.query.filter_by(
+        userID=current_user_id,
+        contact_userID=target_user.userID
+    ).first()
+
+    if not contact or contact.contactStatus != "Active":
         return (
             jsonify({"message": "Add this user as a friend before starting a chat."}),
             403,
         )
 
-    conversation = _find_or_create_direct_conversation(current_user, target_user)
-    conversation.updated_at = datetime.utcnow()
-    db.session.commit()
+    # Get last message if exists
+    last_message = Message.query.filter(
+        or_(
+            and_(Message.senderID == current_user_id, Message.receiverID == target_user.userID),
+            and_(Message.senderID == target_user.userID, Message.receiverID == current_user_id)
+        )
+    ).order_by(Message.timeStamp.desc()).first()
 
-    return (
-        jsonify({"conversation": conversation.to_summary(current_user_id)}),
-        201,
-    )
+    conversation = {
+        "id": target_user.userID,
+        "name": target_user.username,
+        "participants": [target_user.to_dict()],
+        "lastMessage": last_message.to_dict(current_user_id) if last_message else None,
+        "updatedAt": last_message.timeStamp.isoformat() if last_message else datetime.utcnow().isoformat(),
+    }
+
+    return jsonify({"conversation": conversation}), 201
 
 
 @conversations_bp.get("/<int:conversation_id>")
 @jwt_required()
 def get_conversation(conversation_id: int):
-    """Return a single conversation summary."""
+    """Return a single conversation summary (conversation_id is the other user's ID)."""
     current_user_id = _current_user_id()
-    conversation = _conversation_or_404(conversation_id, current_user_id)
-    if not conversation:
-        return jsonify({"message": "Conversation not found."}), 404
-    return jsonify({"conversation": conversation.to_summary(current_user_id)}), 200
+
+    # conversation_id is actually the other user's userID
+    contact_user = User.query.get(conversation_id)
+    if not contact_user:
+        return jsonify({"message": "User not found."}), 404
+
+    # Verify they are contacts
+    contact = Contact.query.filter_by(
+        userID=current_user_id,
+        contact_userID=conversation_id
+    ).first()
+
+    if not contact:
+        return jsonify({"message": "Not a contact."}), 404
+
+    # Get last message
+    last_message = Message.query.filter(
+        or_(
+            and_(Message.senderID == current_user_id, Message.receiverID == conversation_id),
+            and_(Message.senderID == conversation_id, Message.receiverID == current_user_id)
+        )
+    ).order_by(Message.timeStamp.desc()).first()
+
+    conversation = {
+        "id": contact_user.userID,
+        "name": contact_user.username,
+        "participants": [contact_user.to_dict()],
+        "lastMessage": last_message.to_dict(current_user_id) if last_message else None,
+        "updatedAt": last_message.timeStamp.isoformat() if last_message else None,
+    }
+
+    return jsonify({"conversation": conversation}), 200
 
 
 @conversations_bp.get("/<int:conversation_id>/messages")
 @jwt_required()
 def get_messages(conversation_id: int):
-    """Return messages within a conversation."""
+    """Return messages in a conversation (conversation_id is the other user's ID)."""
     current_user_id = _current_user_id()
-    conversation = _conversation_or_404(conversation_id, current_user_id)
 
-    if not conversation:
-        return jsonify({"message": "Conversation not found."}), 404
+    # Verify the other user exists and is a contact
+    contact_user = User.query.get(conversation_id)
+    if not contact_user:
+        return jsonify({"message": "User not found."}), 404
 
-    messages = [
-        message.to_dict(current_user_id) for message in conversation.messages
-    ]
+    contact = Contact.query.filter_by(
+        userID=current_user_id,
+        contact_userID=conversation_id
+    ).first()
 
-    # Mark unread messages addressed to the current user as read.
+    if not contact:
+        return jsonify({"message": "Not a contact."}), 404
+
+    # Get all messages between these two users
+    messages = Message.query.filter(
+        or_(
+            and_(Message.senderID == current_user_id, Message.receiverID == conversation_id),
+            and_(Message.senderID == conversation_id, Message.receiverID == current_user_id)
+        )
+    ).order_by(Message.timeStamp.asc()).all()
+
+    # Mark unread messages as delivered/read
     unread = [
-        message
-        for message in conversation.messages
-        if message.sender_id != current_user_id and message.read_at is None
+        msg for msg in messages
+        if msg.senderID == conversation_id and msg.status == "Sent"
     ]
     if unread:
-        now = datetime.utcnow()
-        for message in unread:
-            message.read_at = now
+        for msg in unread:
+            msg.status = "Read"
         db.session.commit()
 
-    return jsonify({"messages": messages}), 200
+    return jsonify({"messages": [msg.to_dict(current_user_id) for msg in messages]}), 200
 
 
 @conversations_bp.post("/<int:conversation_id>/messages")
 @jwt_required()
 def create_message(conversation_id: int):
-    """Add a new message to a conversation."""
+    """Add a new message to a conversation (conversation_id is the receiver's user ID)."""
     current_user_id = _current_user_id()
-    conversation = _conversation_or_404(conversation_id, current_user_id)
-    if not conversation:
-        return jsonify({"message": "Conversation not found."}), 404
+
+    # Verify the receiver exists and is a contact
+    receiver = User.query.get(conversation_id)
+    if not receiver:
+        return jsonify({"message": "User not found."}), 404
+
+    contact = Contact.query.filter_by(
+        userID=current_user_id,
+        contact_userID=conversation_id
+    ).first()
+
+    if not contact or contact.contactStatus != "Active":
+        return jsonify({"message": "Not an active contact."}), 403
 
     payload = request.get_json(silent=True) or {}
     content = (payload.get("content") or "").strip()
@@ -174,13 +229,20 @@ def create_message(conversation_id: int):
     if not content:
         return jsonify({"message": "Message content is required."}), 400
 
+    # For now, store plaintext content (encryption can be added later)
+    # Using placeholder values for encryption fields
     message = Message(
-        conversation_id=conversation.id,
-        sender_id=current_user_id,
-        content=content,
+        senderID=current_user_id,
+        receiverID=conversation_id,
+        encryptedContent=content,  # TODO: Encrypt this
+        iv="placeholder_iv",  # TODO: Generate real IV
+        hmac="placeholder_hmac",  # TODO: Generate real HMAC
+        status="Sent",
+        msg_Type="text",
+        expiryTime=Message.default_expiry_time(is_group=False),
     )
+
     db.session.add(message)
-    conversation.updated_at = datetime.utcnow()
     db.session.commit()
 
     return jsonify({"message": message.to_dict(current_user_id)}), 201

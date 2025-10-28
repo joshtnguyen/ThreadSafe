@@ -4,7 +4,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from ..database import db
-from ..models import Friendship, User
+from ..models import Contact, User
 
 friends_bp = Blueprint("friends", __name__)
 
@@ -23,10 +23,14 @@ def list_friends():
     if not user:
         return jsonify({"message": "User not found."}), 404
 
+    # Get active contacts only
     friends = [
-        friendship.friend.to_dict() for friendship in sorted(
-            user.friendships, key=lambda entry: entry.friend.display_name.lower()
+        contact.contact_user.to_dict()
+        for contact in sorted(
+            user.contacts,
+            key=lambda entry: entry.contact_user.username.lower()
         )
+        if contact.contactStatus == "Active"
     ]
 
     return (
@@ -51,19 +55,19 @@ def add_friend():
 
     if not current_user or not target_user:
         return jsonify({"message": "User not found."}), 404
-    if target_user.id == current_user.id:
+    if target_user.userID == current_user.userID:
         return jsonify({"message": "You cannot add yourself."}), 400
 
-    existing = Friendship.query.filter_by(
-        user_id=current_user.id, friend_id=target_user.id
+    existing = Contact.query.filter_by(
+        userID=current_user.userID, contact_userID=target_user.userID
     ).first()
     if existing:
         return jsonify({"friend": target_user.to_dict(), "status": "already_friends"}), 200
 
     db.session.add_all(
         [
-            Friendship(user_id=current_user.id, friend_id=target_user.id),
-            Friendship(user_id=target_user.id, friend_id=current_user.id),
+            Contact(userID=current_user.userID, contact_userID=target_user.userID, contactStatus="Active"),
+            Contact(userID=target_user.userID, contact_userID=current_user.userID, contactStatus="Active"),
         ]
     )
     db.session.commit()
