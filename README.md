@@ -147,7 +147,7 @@ docker-compose up
 - Validated group chat permissions and role-based access control
 - Performed load testing on the WebSocket relay server
 
-### Team Member 7: QA Test Engineer
+### Team Member 7: Elijah Miguel Canonigo (QA Test Engineer)
 - Developed comprehensive test plans for all security features
 - Conducted penetration testing on encryption implementation
 - Verified cross-browser compatibility and responsive design
