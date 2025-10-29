@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "../context/AuthContext.jsx";
+import { useWebSocket } from "../context/WebSocketContext.jsx";
 import { api } from "../lib/api.js";
 
 const formatTime = (value) => {
@@ -10,6 +11,7 @@ const formatTime = (value) => {
 
 export default function ChatPage() {
   const { user, token, logout } = useAuth();
+  const { onMessageReceived, onFriendRequest, onFriendRequestAccepted } = useWebSocket();
 
   const [conversations, setConversations] = useState([]);
   const [friends, setFriends] = useState([]);
@@ -112,6 +114,60 @@ export default function ChatPage() {
     document.addEventListener("click", handleClickOutside);
     return () => document.removeEventListener("click", handleClickOutside);
   }, [friendMenuOpen]);
+
+  // Listen for real-time incoming messages
+  useEffect(() => {
+    const unsubscribe = onMessageReceived((message) => {
+      // Only add message if it's for the currently selected conversation
+      if (message.sender?.id === selectedId || message.receiver?.id === selectedId) {
+        setMessages((prev) => [...prev, message]);
+      }
+
+      // Update conversation last message
+      setConversations((prev) =>
+        prev.map((conv) =>
+          conv.id === message.sender?.id || conv.id === message.receiver?.id
+            ? {
+                ...conv,
+                lastMessage: message,
+                updatedAt: message.sentAt,
+              }
+            : conv
+        )
+      );
+    });
+    return unsubscribe;
+  }, [onMessageReceived, selectedId]);
+
+  // Listen for real-time friend requests
+  useEffect(() => {
+    const unsubscribe = onFriendRequest((request) => {
+      setFriendRequests((prev) => ({
+        ...prev,
+        incoming: [...prev.incoming, request],
+      }));
+      setFeedback(`New friend request from ${request.user.username}`);
+    });
+    return unsubscribe;
+  }, [onFriendRequest]);
+
+  // Listen for friend request acceptance
+  useEffect(() => {
+    const unsubscribe = onFriendRequestAccepted((friendData) => {
+      // Move from outgoing requests to friends list
+      setFriendRequests((prev) => ({
+        ...prev,
+        outgoing: prev.outgoing.filter((req) => req.user.id !== friendData.id),
+      }));
+      setFriends((prev) => {
+        const exists = prev.some((f) => f.id === friendData.id);
+        if (exists) return prev;
+        return [...prev, friendData].sort((a, b) => a.username.localeCompare(b.username));
+      });
+      setFeedback(`${friendData.username} accepted your friend request!`);
+    });
+    return unsubscribe;
+  }, [onFriendRequestAccepted]);
 
   const handleSendMessage = async (event) => {
     event.preventDefault();

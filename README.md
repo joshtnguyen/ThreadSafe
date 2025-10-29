@@ -19,8 +19,8 @@ A secure, scalable messaging platform implementing true end-to-end encryption (E
 ## Architecture
 ### Three-Server Design
 - **Main Application Server** (Flask, Port 5000): Manages authentication, REST APIs, and serves the frontend
-- **WebSocket Relay Server** (Flask-SocketIO, Port 5001): Handles TLS-secured message routing without decryption capability
-- **Key Generation Server** (Port 5002): A dedicated service for secure group key derivation
+- **TLS Relay Server** (Flask-SocketIO, Port 5001): Zero-knowledge relay for real-time encrypted message routing without decryption capability
+- **Key Generation Server** (Port 5002): A dedicated service for secure group key derivation (coming soon)
 
 ## Quick Start (Docker - Recommended)
 ```bash
@@ -32,55 +32,81 @@ docker-compose up
 ### Access at: [http://localhost:5000](http://localhost:5000)
 
 ## Manual Setup
-### Back-end Setup
-1. Clone the repository: 
+### Prerequisites
+- Python 3.8+
+- Node.js 16+ and npm
+- Git
+
+### Backend Setup
+1. Clone the repository:
    ```bash
    git clone git@github.com:joshtnguyen/CMPE-131-Term-Project.git
-   ```
-2. Navigate to the directory: 
-   ```bash
    cd CMPE-131-Term-Project
    ```
-3. Set up virtual environment: 
+
+2. Set up virtual environment:
    ```bash
    python3 -m venv venv
    ```
-4. Activate virtual environment:
-   - Windows: 
+
+3. Activate virtual environment:
+   - **Windows**:
      ```bash
      venv\Scripts\activate
      ```
-   - MacOS/Linux: 
+   - **MacOS/Linux**:
      ```bash
      source venv/bin/activate
      ```
-5. Install dependencies: 
+
+4. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-6. Database Setup:
-   - Start MySQL server: 
-     ```bash
-     mysql -u root -p
-     ```
-   - Create database: 
-     ```sql
-     CREATE DATABASE secure_msg_app;
-     ```
-   - Import schema: 
-     ```bash
-     mysql -u root -p secure_msg_app < database/schema.sql
-     ```
-7. Run the application: 
-   ```bash
-   python run.py
-   ```
-8. Access at: [http://localhost:5000](http://localhost:5000)
 
-### Front-end Setup
-- The frontend is served directly by the Flask backend
-- cd into /frontend then run `npm install`
-- then run `npm run dev`
+5. Database setup (SQLite - automatic):
+   - The database is created automatically on first run using SQLAlchemy
+   - Tables are auto-generated from models in `backend/models.py`
+   - For MySQL production setup, see `backend/schema.sql`
+
+### Frontend Setup
+1. Navigate to frontend directory:
+   ```bash
+   cd frontend
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+### Running the Application
+**You need 3 terminal windows running simultaneously:**
+
+**Terminal 1 - TLS Relay Server (Port 5001):**
+```bash
+cd CMPE-131-Term-Project
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+python relay_server_TLS.py
+```
+
+**Terminal 2 - Main Backend Server (Port 5000):**
+```bash
+cd CMPE-131-Term-Project
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+python run.py
+```
+
+**Terminal 3 - Frontend Dev Server (Port 5173):**
+```bash
+cd CMPE-131-Term-Project/frontend
+npm run dev
+```
+
+### Access the Application
+- **Frontend**: [http://localhost:5173](http://localhost:5173)
+- **Backend API**: [http://localhost:5000](http://localhost:5000)
+- **TLS Relay Server Health**: [http://localhost:5001/health](http://localhost:5001/health)
 
 ## Key Features Testing
 ### Encryption Protocol Validation

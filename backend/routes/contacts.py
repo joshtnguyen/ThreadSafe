@@ -6,6 +6,7 @@ from sqlalchemy import func
 
 from ..database import db
 from ..models import Contact, User
+from ..websocket_helper import emit_friend_request, emit_friend_request_accepted
 
 friends_bp = Blueprint("friends", __name__)
 
@@ -152,6 +153,13 @@ def add_friend():
     db.session.add(new_request)
     db.session.commit()
 
+    # Emit real-time friend request notification
+    emit_friend_request(target_user.userID, {
+        'requestId': current_user.userID,
+        'user': current_user.to_dict(),
+        'addedAt': new_request.added_at.isoformat() if new_request.added_at else None
+    })
+
     return jsonify({
         "friend": target_user.to_dict(),
         "status": "pending",
@@ -200,6 +208,12 @@ def accept_friend_request(requester_id: int):
     db.session.commit()
 
     requester = User.query.get(requester_id)
+    current_user = User.query.get(current_user_id)
+
+    # Emit real-time notification to requester
+    if current_user:
+        emit_friend_request_accepted(requester_id, current_user.to_dict())
+
     return jsonify({
         "friend": requester.to_dict() if requester else None,
         "message": "Friend request accepted."

@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, or_
 
 from ..database import db
 from ..models import Contact, Message, User
+from ..websocket_helper import emit_new_message
 
 conversations_bp = Blueprint("conversations", __name__)
 
@@ -248,5 +249,9 @@ def create_message(conversation_id: int):
 
     db.session.add(message)
     db.session.commit()
+
+    # Emit real-time message to receiver via WebSocket
+    message_data = message.to_dict(conversation_id)
+    emit_new_message(conversation_id, message_data)
 
     return jsonify({"message": message.to_dict(current_user_id)}), 201

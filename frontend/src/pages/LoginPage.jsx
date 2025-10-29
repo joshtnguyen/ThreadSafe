@@ -48,7 +48,7 @@ export default function LoginPage() {
               name="username"
               value={form.username}
               onChange={handleChange}
-              placeholder="Username (case-sensitive) or email"
+              placeholder="Username or Email"
               autoComplete="username"
               required
             />
