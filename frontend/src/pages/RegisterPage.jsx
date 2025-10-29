@@ -51,17 +51,17 @@ export default function RegisterPage() {
               name="displayName"
               value={form.displayName}
               onChange={handleChange}
-              placeholder="Your full name"
+              placeholder="Your Full Name"
               autoComplete="name"
             />
           </label>
           <label className="field">
-            <span className="field-label">Username (case-sensitive)</span>
+            <span className="field-label">Username</span>
             <input
               name="username"
               value={form.username}
               onChange={handleChange}
-              placeholder="Username (case matters: alice ≠ Alice)"
+              placeholder="Username"
               autoComplete="username"
               required
             />
@@ -73,7 +73,7 @@ export default function RegisterPage() {
               name="email"
               value={form.email}
               onChange={handleChange}
-              placeholder="Email address"
+              placeholder="Email Address"
               autoComplete="email"
               required
             />
