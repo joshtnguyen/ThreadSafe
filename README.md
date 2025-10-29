@@ -113,7 +113,7 @@ docker-compose up
 - Coordinated between technical and non-technical stakeholders
 - Ensured the final product aligned with user needs and security requirements
 
-### Team Member 2: Minh (Product Marketing Manager)
+### Team Member 2: Tanquang Tran (Product Marketing Manager)
 - Developed user personas and market positioning strategy
 - Created documentation and user onboarding materials
 - Designed security feature explanations for non-technical users
@@ -139,7 +139,7 @@ docker-compose up
 - Created settings and preferences management system
 - Implemented local backup/restore functionality
 
-### Team Member 6: QA Test Engineer
+### Team Member 6: Minh Trinh (QA Test Engineer)
 - Developed comprehensive test plans for all security features
 - Conducted penetration testing on encryption implementation
 - Verified cross-browser compatibility and responsive design
