@@ -45,8 +45,8 @@ docker-compose up
    cd CMPE-131-Term-Project
    ```
 
-2. Open two terminals
-   My recommendation: in vscode open a terminal (Command+j for mac) then press "Split Terminal" icon in the top right-ish of the terminal and to the left of the trash icon
+2. Open two terminals  
+   My recommendation: in vscode open a terminal (Command+j for mac) then press "Split Terminal" icon in the top right-ish of the terminal and to the left of the trash icon  
    - Both terminals should be in the project root folder `/CMPE-131-Term-Project`
 
 3. Run this command in one terminal:
