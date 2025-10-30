@@ -30,7 +30,7 @@ cd CMPE-131-Term-Project
 docker-compose up
 ```
 
-### Access at: [http://localhost:5000](http://localhost:5000)
+##### Access at: [http://localhost:5000](http://localhost:5000)
 
 ## Quick Start (do this for now)
 
