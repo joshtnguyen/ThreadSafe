@@ -29,7 +29,36 @@ git clone git@github.com:joshtnguyen/CMPE-131-Term-Project.git
 cd CMPE-131-Term-Project
 docker-compose up
 ```
+
 ### Access at: [http://localhost:5000](http://localhost:5000)
+
+## Quick Start (do this for now)
+
+### Make sure these are installed first
+- Python
+- React
+- Git
+
+1. Clone the repository:
+   ```bash
+   git clone git@github.com:joshtnguyen/CMPE-131-Term-Project.git
+   cd CMPE-131-Term-Project
+   ```
+
+2. Open two terminals
+   My recommendation: in vscode open a terminal (Command+j for mac) then press "Split Terminal" icon in the top right-ish of the terminal and to the left of the trash icon
+   - Both terminals should be in the project root folder `/CMPE-131-Term-Project`
+
+3. Run this command in one terminal:
+   ```bash
+   python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && python run.py 
+   ```
+4. Run this command in the other terminal:
+   ```bash
+   cd frontend && npm install && npm run dev
+   ```
+
+5. Command+click on the `http://localhost:5173/` to open the app in your browser
 
 ## Manual Setup
 ### Prerequisites
@@ -46,7 +75,7 @@ docker-compose up
 
 2. Set up virtual environment:
    ```bash
-   python3 -m venv venv
+   python3 -m venv .venv
    ```
 
 3. Activate virtual environment:
@@ -56,7 +85,7 @@ docker-compose up
      ```
    - **MacOS/Linux**:
      ```bash
-     source venv/bin/activate
+     source .venv/bin/activate
      ```
 
 4. Install dependencies:
