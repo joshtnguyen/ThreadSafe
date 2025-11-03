@@ -11,7 +11,7 @@ const formatTime = (value) => {
 
 export default function ChatPage() {
   const { user, token, logout } = useAuth();
-  const { onMessageReceived, onFriendRequest, onFriendRequestAccepted } = useWebSocket();
+  const { onMessageReceived, onFriendRequest, onFriendRequestAccepted, onFriendDeleted } = useWebSocket();
 
   const [conversations, setConversations] = useState([]);
   const [friends, setFriends] = useState([]);
@@ -123,9 +123,9 @@ export default function ChatPage() {
         setMessages((prev) => [...prev, message]);
       }
 
-      // Update conversation last message
-      setConversations((prev) =>
-        prev.map((conv) =>
+      // Update conversation last message and re-sort to move to top
+      setConversations((prev) => {
+        const updated = prev.map((conv) =>
           conv.id === message.sender?.id || conv.id === message.receiver?.id
             ? {
                 ...conv,
@@ -133,8 +133,14 @@ export default function ChatPage() {
                 updatedAt: message.sentAt,
               }
             : conv
-        )
-      );
+        );
+        // Sort by updatedAt descending (newest first)
+        return updated.sort((a, b) => {
+          const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+          const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+          return timeB - timeA;
+        });
+      });
     });
     return unsubscribe;
   }, [onMessageReceived, selectedId]);
@@ -169,6 +175,16 @@ export default function ChatPage() {
     return unsubscribe;
   }, [onFriendRequestAccepted]);
 
+  // Listen for friend deletions
+  useEffect(() => {
+    const unsubscribe = onFriendDeleted((deleterData) => {
+      // Remove the deleter from friends list
+      setFriends((prev) => prev.filter((f) => f.id !== deleterData.id));
+      setFeedback(`${deleterData.username} removed you as a friend.`);
+    });
+    return unsubscribe;
+  }, [onFriendDeleted]);
+
   const handleSendMessage = async (event) => {
     event.preventDefault();
     if (!messageDraft.trim() || !selectedId) {
@@ -180,8 +196,8 @@ export default function ChatPage() {
       const response = await api.sendMessage(token, selectedId, messageDraft.trim());
       const newMessage = response.message;
       setMessages((previous) => [...previous, newMessage]);
-      setConversations((previous) =>
-        previous.map((conversation) =>
+      setConversations((previous) => {
+        const updated = previous.map((conversation) =>
           conversation.id === selectedId
             ? {
                 ...conversation,
@@ -189,8 +205,14 @@ export default function ChatPage() {
                 updatedAt: newMessage.sentAt,
               }
             : conversation,
-        ),
-      );
+        );
+        // Sort by updatedAt descending (newest first)
+        return updated.sort((a, b) => {
+          const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+          const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+          return timeB - timeA;
+        });
+      });
       setMessageDraft("");
     } catch (error) {
       setFeedback(error.message);
@@ -600,6 +622,12 @@ export default function ChatPage() {
           </form>
           {feedback ? <p className="form-error banner">{feedback}</p> : null}
         </section>
+      </div>
+
+      <div className="bottom-tab-bar">
+        <button className="tab-settings" type="button">
+          ⚙️ Settings
+        </button>
       </div>
     </main>
   );

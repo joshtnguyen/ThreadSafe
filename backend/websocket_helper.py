@@ -51,6 +51,18 @@ def emit_friend_request_accepted(requester_id: int, friend_data: dict):
         print(f'Error emitting friend acceptance: {e}')
 
 
+def emit_friend_deleted(friend_id: int, deleter_data: dict):
+    """Emit a friend deletion notification."""
+    try:
+        if sio.connected:
+            sio.emit('friend_deleted', {
+                'friendId': friend_id,
+                'deleter': deleter_data
+            })
+    except Exception as e:
+        print(f'Error emitting friend deletion: {e}')
+
+
 def is_connected():
     """Check if connected to relay server."""
     return sio.connected
