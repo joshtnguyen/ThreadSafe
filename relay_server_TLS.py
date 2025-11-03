@@ -91,6 +91,20 @@ def handle_friend_request_accepted(data):
         print(f'Friend acceptance notification sent to user {requester_id}')
 
 
+@socketio.on('friend_deleted')
+def handle_friend_deleted(data):
+    """
+    Notify a user that they were removed as a friend.
+    Data: {friendId, deleter}
+    """
+    friend_id = data.get('friendId')
+    deleter_data = data.get('deleter')
+
+    if friend_id and deleter_data:
+        socketio.emit('friend_deleted_event', {'deleter': deleter_data}, room=f'user_{friend_id}')
+        print(f'Friend deletion notification sent to user {friend_id}')
+
+
 @app.route('/health')
 def health():
     """Health check endpoint."""

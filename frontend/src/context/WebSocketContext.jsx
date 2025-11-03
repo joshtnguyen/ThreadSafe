@@ -13,6 +13,7 @@ export function WebSocketProvider({ children }) {
   const messageHandlersRef = useRef([]);
   const friendRequestHandlersRef = useRef([]);
   const friendAcceptHandlersRef = useRef([]);
+  const friendDeleteHandlersRef = useRef([]);
 
   useEffect(() => {
     // Only connect if user is logged in
@@ -64,6 +65,12 @@ export function WebSocketProvider({ children }) {
       friendAcceptHandlersRef.current.forEach((handler) => handler(data.friend));
     });
 
+    // Listen for friend deletions
+    newSocket.on("friend_deleted_event", (data) => {
+      console.log("❌ Friend removed:", data.deleter);
+      friendDeleteHandlersRef.current.forEach((handler) => handler(data.deleter));
+    });
+
     setSocket(newSocket);
 
     return () => {
@@ -95,12 +102,21 @@ export function WebSocketProvider({ children }) {
     };
   };
 
+  // Register friend delete handler
+  const onFriendDeleted = (handler) => {
+    friendDeleteHandlersRef.current = [...friendDeleteHandlersRef.current, handler];
+    return () => {
+      friendDeleteHandlersRef.current = friendDeleteHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
   const value = {
     socket,
     isConnected,
     onMessageReceived,
     onFriendRequest,
     onFriendRequestAccepted,
+    onFriendDeleted,
   };
 
   return (

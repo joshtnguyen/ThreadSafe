@@ -6,7 +6,7 @@ from sqlalchemy import func
 
 from ..database import db
 from ..models import Contact, User
-from ..websocket_helper import emit_friend_request, emit_friend_request_accepted
+from ..websocket_helper import emit_friend_request, emit_friend_request_accepted, emit_friend_deleted
 
 friends_bp = Blueprint("friends", __name__)
 
@@ -277,5 +277,8 @@ def delete_friend(friend_id: int):
         db.session.delete(contact2)
 
     db.session.commit()
+
+    # Emit real-time notification to the deleted friend
+    emit_friend_deleted(friend_id, current_user.to_dict())
 
     return jsonify({"message": "Friend removed successfully."}), 200
