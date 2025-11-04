@@ -162,7 +162,7 @@ npm run dev
 - Test cross-device session management and revocation
 
 ## Team Members
-### Team Member 1: Josh Nguyen (Product Manager)
+### Team Member 1: Josh Nguyen (Project Manager)
 - Defined project scope and feature requirements
 - Prioritized development tasks and managed the product backlog
 - Coordinated between technical and non-technical stakeholders
