@@ -148,7 +148,7 @@ def get_conversation(conversation_id: int):
     ).first()
 
     if not contact:
-        return jsonify({"message": "Not a contact."}), 404
+        return jsonify({"message": "Contact not found."}), 404
 
     # Get last message
     last_message = Message.query.filter(
@@ -175,20 +175,12 @@ def get_messages(conversation_id: int):
     """Return messages in a conversation (conversation_id is the other user's ID)."""
     current_user_id = _current_user_id()
 
-    # Verify the other user exists and is a contact
+    # Verify the other user exists
     contact_user = User.query.get(conversation_id)
     if not contact_user:
         return jsonify({"message": "User not found."}), 404
 
-    contact = Contact.query.filter_by(
-        userID=current_user_id,
-        contact_userID=conversation_id
-    ).first()
-
-    if not contact:
-        return jsonify({"message": "Not a contact."}), 404
-
-    # Get all messages between these two users
+    # Get all messages between these two users (regardless of contact status - chat history preserved)
     messages = Message.query.filter(
         or_(
             and_(Message.senderID == current_user_id, Message.receiverID == conversation_id),
@@ -196,15 +188,25 @@ def get_messages(conversation_id: int):
         )
     ).order_by(Message.timeStamp.asc()).all()
 
-    # Mark unread messages as delivered/read
-    unread = [
-        msg for msg in messages
-        if msg.senderID == conversation_id and msg.status == "Sent"
-    ]
-    if unread:
-        for msg in unread:
-            msg.status = "Read"
-        db.session.commit()
+    # If no messages exist, return empty list (not an error - they can view old chats)
+    if not messages:
+        return jsonify({"messages": []}), 200
+
+    # Mark unread messages as delivered/read only if they're still contacts
+    contact = Contact.query.filter_by(
+        userID=current_user_id,
+        contact_userID=conversation_id
+    ).first()
+
+    if contact:  # Only mark as read if still friends
+        unread = [
+            msg for msg in messages
+            if msg.senderID == conversation_id and msg.status == "Sent"
+        ]
+        if unread:
+            for msg in unread:
+                msg.status = "Read"
+            db.session.commit()
 
     return jsonify({"messages": [msg.to_dict(current_user_id) for msg in messages]}), 200
 

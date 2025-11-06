@@ -22,9 +22,54 @@ export default function RegisterPage() {
     setForm((previous) => ({ ...previous, [name]: value }));
   };
 
+  const validateUsername = (username) => {
+    // 3-15 characters, start with letter, allow letters/numbers/_-. after first char
+    const usernamePattern = /^[a-zA-Z][a-zA-Z0-9._-]{2,14}$/;
+
+    if (username.length < 3) {
+      return "Username must be at least 3 characters long.";
+    }
+    if (username.length > 15) {
+      return "Username must not exceed 15 characters.";
+    }
+    if (!/^[a-zA-Z]/.test(username)) {
+      return "Username must start with a letter, not a number or special character.";
+    }
+    if (!usernamePattern.test(username)) {
+      return "Username can only contain letters, numbers, underscore (_), hyphen (-), and period (.).";
+    }
+    return null; // Valid
+  };
+
+  const validatePassword = (password) => {
+    // 8-15 characters, all letters and special characters allowed
+    if (password.length < 8) {
+      return "Password must be at least 8 characters long.";
+    }
+    if (password.length > 15) {
+      return "Password must not exceed 15 characters.";
+    }
+    return null; // Valid
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
+
+    // Validate username on client side
+    const usernameError = validateUsername(form.username);
+    if (usernameError) {
+      setError(usernameError);
+      return;
+    }
+
+    // Validate password on client side
+    const passwordError = validatePassword(form.password);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {

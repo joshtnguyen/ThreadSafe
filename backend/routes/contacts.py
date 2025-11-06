@@ -269,7 +269,7 @@ def delete_friend(friend_id: int):
     ).first()
 
     if not contact1 and not contact2:
-        return jsonify({"message": "Not friends."}), 404
+        return jsonify({"message": "Contact not found."}), 404
 
     if contact1:
         db.session.delete(contact1)

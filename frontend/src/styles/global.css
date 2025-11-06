@@ -64,6 +64,13 @@ input {
   background: rgba(255, 255, 255, 0.25);
 }
 
+/* Truncated text with tooltip */
+.truncate-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .auth-shell {
   display: grid;
   place-items: center;
@@ -288,14 +295,33 @@ input {
   gap: 12px;
 }
 
+.friend-item-wrapper {
+  position: relative;
+  width: 100%;
+}
+
 .nav-item {
   background: var(--panel-soft);
   border-radius: 18px;
   padding: 10px 14px;
+  padding-right: 40px;
   display: flex;
   align-items: center;
   gap: 12px;
   color: inherit;
+  min-width: 0;
+  width: 100%;
+}
+
+.friend-item-wrapper .nav-item {
+  padding-right: 40px;
+}
+
+.friend-item-wrapper button[style*="position: absolute"] {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .nav-item .nav-avatar {
@@ -311,6 +337,12 @@ input {
 .nav-label {
   text-align: left;
   font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  max-width: 130px;
 }
 
 .nav-empty {
@@ -350,6 +382,7 @@ input {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-width: 0;
 }
 
 .panel-header h1 {
@@ -359,6 +392,7 @@ input {
 
 .panel-header.conversation h1 {
   font-size: 1.6rem;
+  max-width: 250px;
 }
 
 .conversation-items {
@@ -400,10 +434,15 @@ input {
   flex-direction: column;
   gap: 6px;
   flex: 1;
+  min-width: 0;
 }
 
 .conversation-name {
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
 }
 
 .conversation-preview {
@@ -442,9 +481,10 @@ input {
 
 .message-bubble {
   max-width: 62%;
+  min-width: 150px;
   padding: 16px;
   border-radius: 22px;
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   gap: 8px;
   background: rgba(255, 255, 255, 0.08);
@@ -460,6 +500,11 @@ input {
   font-size: 0.75rem;
   letter-spacing: 0.12em;
   color: rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+  display: block;
 }
 
 .message-bubble.own .bubble-meta {

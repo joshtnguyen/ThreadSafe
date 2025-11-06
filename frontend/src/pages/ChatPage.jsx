@@ -9,6 +9,13 @@ const formatTime = (value) => {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 };
 
+// Utility component for truncated username display with tooltip
+const TruncatedUsername = ({ username, className = "" }) => (
+  <span className={`truncate-text ${className}`} title={username}>
+    {username}
+  </span>
+);
+
 export default function ChatPage() {
   const { user, token, logout } = useAuth();
   const { onMessageReceived, onFriendRequest, onFriendRequestAccepted, onFriendDeleted } = useWebSocket();
@@ -80,8 +87,12 @@ export default function ChatPage() {
   useEffect(() => {
     if (!selectedId) {
       setMessages([]);
+      setFeedback(""); // Clear feedback when no conversation selected
       return;
     }
+    // Clear feedback when switching conversations
+    setFeedback("");
+
     let isMounted = true;
     async function loadMessages() {
       try {
@@ -180,7 +191,11 @@ export default function ChatPage() {
     const unsubscribe = onFriendDeleted((deleterData) => {
       // Remove the deleter from friends list
       setFriends((prev) => prev.filter((f) => f.id !== deleterData.id));
-      setFeedback(`${deleterData.username} removed you as a friend.`);
+
+      // Keep their conversation in the list - chat history preserved
+      // Don't clear selectedId - user can still view the chat
+
+      setFeedback(`${deleterData.username} removed you as a friend. Chat history preserved.`);
     });
     return unsubscribe;
   }, [onFriendDeleted]);
@@ -324,11 +339,7 @@ export default function ChatPage() {
       await api.deleteFriend(token, friendId);
       setFriends((previous) => previous.filter((friend) => friend.id !== friendId));
       setFriendMenuOpen(null);
-      // If we had a conversation with this friend selected, clear it
-      if (selectedId === friendId) {
-        setSelectedId(null);
-        setMessages([]);
-      }
+      // Keep conversation selected - chat history is still viewable
       setFeedback("✓ Friend removed. Chat history preserved.");
     } catch (error) {
       setFeedback(error.message);
@@ -341,9 +352,13 @@ export default function ChatPage() {
         <aside className="sidebar">
           <div className="sidebar-profile">
             <div className="avatar">{user.displayName?.charAt(0).toUpperCase()}</div>
-            <div>
-              <h2>{user.displayName || user.username}</h2>
-              <p>@{user.username}</p>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <h2 style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user.displayName || user.username}>
+                {user.displayName || user.username}
+              </h2>
+              <p style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`@${user.username}`}>
+                @{user.username}
+              </p>
             </div>
           </div>
           <nav className="sidebar-nav">
@@ -361,7 +376,7 @@ export default function ChatPage() {
                         borderBottom: "1px solid #eee",
                       }}
                     >
-                      <div style={{ marginBottom: "8px", fontWeight: "500" }}>
+                      <div style={{ marginBottom: "8px", fontWeight: "500", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={request.user.username}>
                         {request.user.username}
                       </div>
                       <div style={{ display: "flex", gap: "8px" }}>
@@ -408,13 +423,13 @@ export default function ChatPage() {
               <div className="nav-list">
                 {friends.length ? (
                   friends.map((friend) => (
-                    <div key={friend.id} style={{ position: "relative" }}>
+                    <div key={friend.id} className="friend-item-wrapper">
                       <button
                         type="button"
                         className="nav-item"
                         onClick={() => startConversationWith(friend.username)}
                         disabled={isOpeningChat}
-                        style={{ paddingRight: "40px" }}
+                        title={friend.username}
                       >
                         <span className="nav-avatar">
                           {friend.username.charAt(0).toUpperCase()}
@@ -506,8 +521,8 @@ export default function ChatPage() {
                         alignItems: "center",
                       }}
                     >
-                      <span>{request.user.username}</span>
-                      <span style={{ fontSize: "11px" }}>⏳ Pending</span>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }} title={request.user.username}>{request.user.username}</span>
+                      <span style={{ fontSize: "11px", flexShrink: 0, marginLeft: "8px" }}>⏳ Pending</span>
                     </div>
                   ))}
                 </div>
@@ -564,7 +579,7 @@ export default function ChatPage() {
                       {conversation.name?.charAt(0).toUpperCase()}
                     </div>
                     <div className="conversation-copy">
-                      <span className="conversation-name">{conversation.name}</span>
+                      <span className="conversation-name" title={conversation.name}>{conversation.name}</span>
                       <span className="conversation-preview">{preview}</span>
                     </div>
                     <span className="conversation-chevron" aria-hidden>
@@ -579,7 +594,12 @@ export default function ChatPage() {
 
         <section className="chat-panel">
           <header className="panel-header conversation">
-            <h1>{selectedConversation?.name || "Select a conversation"}</h1>
+            <h1
+              style={selectedConversation ? { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : {}}
+              title={selectedConversation?.name || ""}
+            >
+              {selectedConversation?.name || "Select a conversation"}
+            </h1>
           </header>
           <div className="message-list">
             {selectedConversation ? (
@@ -589,7 +609,7 @@ export default function ChatPage() {
                     key={message.id}
                     className={`message-bubble ${message.isOwn ? "own" : "their"}`}
                   >
-                    <span className="bubble-meta">
+                    <span className="bubble-meta" title={message.isOwn ? "You" : message.sender.username}>
                       {message.isOwn ? "You" : message.sender.username}
                     </span>
                     <p className="bubble-text">{message.content}</p>
