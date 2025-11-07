@@ -2,60 +2,81 @@
  * Key storage utilities for managing user's encryption keys
  *
  * NOTE: In production, private keys should be:
- * 1. Stored in IndexedDB (not sessionStorage)
+ * 1. Stored in IndexedDB (not localStorage)
  * 2. Encrypted with a key derived from user's password (PBKDF2)
  * 3. Never sent to the server
  *
- * For now, we're using sessionStorage for simplicity and development.
+ * For now, we're using localStorage so keys persist across sessions.
+ * Keys are stored per-user using their user ID.
  */
 
-const PRIVATE_KEY_STORAGE_KEY = 'privateKey';
-const PUBLIC_KEY_STORAGE_KEY = 'publicKey';
+const PRIVATE_KEY_PREFIX = 'privateKey_';
+const PUBLIC_KEY_PREFIX = 'publicKey_';
 
 /**
- * Store private key in browser storage
- * @param {string} privateKeyPem Base64-encoded PEM format private key
+ * Get storage key for user-specific private key
  */
-export function storePrivateKey(privateKeyPem) {
-  sessionStorage.setItem(PRIVATE_KEY_STORAGE_KEY, privateKeyPem);
+function getPrivateKeyStorageKey(userId) {
+  return `${PRIVATE_KEY_PREFIX}${userId}`;
 }
 
 /**
- * Retrieve private key from browser storage
+ * Get storage key for user-specific public key
+ */
+function getPublicKeyStorageKey(userId) {
+  return `${PUBLIC_KEY_PREFIX}${userId}`;
+}
+
+/**
+ * Store private key in browser storage for a specific user
+ * @param {string} privateKeyPem Base64-encoded PEM format private key
+ * @param {number} userId User ID to associate key with
+ */
+export function storePrivateKey(privateKeyPem, userId) {
+  localStorage.setItem(getPrivateKeyStorageKey(userId), privateKeyPem);
+}
+
+/**
+ * Retrieve private key from browser storage for a specific user
+ * @param {number} userId User ID whose key to retrieve
  * @returns {string|null} Base64-encoded PEM format private key, or null if not found
  */
-export function getPrivateKey() {
-  return sessionStorage.getItem(PRIVATE_KEY_STORAGE_KEY);
+export function getPrivateKey(userId) {
+  return localStorage.getItem(getPrivateKeyStorageKey(userId));
 }
 
 /**
- * Store public key in browser storage
+ * Store public key in browser storage for a specific user
  * @param {string} publicKeyPem Base64-encoded PEM format public key
+ * @param {number} userId User ID to associate key with
  */
-export function storePublicKey(publicKeyPem) {
-  sessionStorage.setItem(PUBLIC_KEY_STORAGE_KEY, publicKeyPem);
+export function storePublicKey(publicKeyPem, userId) {
+  localStorage.setItem(getPublicKeyStorageKey(userId), publicKeyPem);
 }
 
 /**
- * Retrieve public key from browser storage
+ * Retrieve public key from browser storage for a specific user
+ * @param {number} userId User ID whose key to retrieve
  * @returns {string|null} Base64-encoded PEM format public key, or null if not found
  */
-export function getPublicKey() {
-  return sessionStorage.getItem(PUBLIC_KEY_STORAGE_KEY);
+export function getPublicKey(userId) {
+  return localStorage.getItem(getPublicKeyStorageKey(userId));
 }
 
 /**
- * Clear all stored keys (e.g., on logout)
+ * Clear stored keys for a specific user (e.g., on account deletion)
+ * @param {number} userId User ID whose keys to clear
  */
-export function clearKeys() {
-  sessionStorage.removeItem(PRIVATE_KEY_STORAGE_KEY);
-  sessionStorage.removeItem(PUBLIC_KEY_STORAGE_KEY);
+export function clearKeys(userId) {
+  localStorage.removeItem(getPrivateKeyStorageKey(userId));
+  localStorage.removeItem(getPublicKeyStorageKey(userId));
 }
 
 /**
- * Check if keys exist in storage
+ * Check if keys exist in storage for a specific user
+ * @param {number} userId User ID to check
  * @returns {boolean} True if both keys are stored
  */
-export function hasKeys() {
-  return Boolean(getPrivateKey() && getPublicKey());
+export function hasKeys(userId) {
+  return Boolean(getPrivateKey(userId) && getPublicKey(userId));
 }

@@ -83,9 +83,9 @@ export default function RegisterPage() {
       // Step 2: Register account (backend will generate its own keys initially)
       const response = await api.register(form);
 
-      // Step 3: Store private key locally (NEVER send to server!)
-      storePrivateKey(privateKeyPem);
-      storePublicKey(publicKeyPem);
+      // Step 3: Store private key locally with user ID (NEVER send to server!)
+      storePrivateKey(privateKeyPem, response.user.id);
+      storePublicKey(publicKeyPem, response.user.id);
 
       // Step 4: Update backend with our client-generated public key
       await api.rotatePublicKey(response.accessToken, publicKeyPem);

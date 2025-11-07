@@ -36,9 +36,8 @@ export function AuthProvider({ children }) {
     setToken(null);
     sessionStorage.removeItem("user");
     sessionStorage.removeItem("accessToken");
-    // Clear encryption keys on logout
-    sessionStorage.removeItem("privateKey");
-    sessionStorage.removeItem("publicKey");
+    // Note: We DON'T clear encryption keys on logout
+    // Keys are stored per-user in localStorage and will be loaded on next login
   }, []);
 
   const value = useMemo(

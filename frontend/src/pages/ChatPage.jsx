@@ -49,10 +49,12 @@ export default function ChatPage() {
   useEffect(() => {
     async function loadPrivateKey() {
       try {
-        const privateKeyPem = getPrivateKey();
+        const privateKeyPem = getPrivateKey(user.id);
         if (privateKeyPem) {
           const key = await importPrivateKey(privateKeyPem);
           setPrivateKey(key);
+        } else {
+          setFeedback("No encryption keys found. You may need to re-register to decrypt messages.");
         }
       } catch (error) {
         console.error("Failed to load private key:", error);
@@ -60,7 +62,7 @@ export default function ChatPage() {
       }
     }
     loadPrivateKey();
-  }, []);
+  }, [user.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -140,30 +142,34 @@ export default function ChatPage() {
     }
 
     async function decryptMessages() {
+      const newDecryptions = {};
+
       for (const message of messages) {
-        // Skip if already decrypted or missing encryption data
-        if (decryptedMessages[message.id] || !message.encrypted_aes_key || !message.ephemeral_public_key) {
+        // Skip if missing encryption data
+        if (!message.encrypted_aes_key || !message.ephemeral_public_key) {
           continue;
         }
 
         try {
           const plaintext = await decryptMessageComplete(message, privateKey);
-          setDecryptedMessages((prev) => ({
-            ...prev,
-            [message.id]: plaintext,
-          }));
+          newDecryptions[message.id] = plaintext;
         } catch (error) {
           console.error(`Failed to decrypt message ${message.id}:`, error);
-          setDecryptedMessages((prev) => ({
-            ...prev,
-            [message.id]: "[Decryption failed]",
-          }));
+          newDecryptions[message.id] = "[Decryption failed]";
         }
+      }
+
+      // Update all decrypted messages at once
+      if (Object.keys(newDecryptions).length > 0) {
+        setDecryptedMessages((prev) => ({
+          ...prev,
+          ...newDecryptions,
+        }));
       }
     }
 
     decryptMessages();
-  }, [messages, privateKey, decryptedMessages]);
+  }, [messages, privateKey]);
 
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
