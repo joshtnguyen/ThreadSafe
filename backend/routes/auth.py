@@ -6,7 +6,8 @@ from sqlalchemy import func
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from ..database import db
-from ..models import User
+from ..models import User, PublicKey
+from ..encryption.ecc_handler import generate_key_pair, serialize_public_key
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -65,6 +66,29 @@ def register():
     )
 
     db.session.add(user)
+    db.session.flush()  # Flush to get user.userID before commit
+
+    # Generate ECC key pair for end-to-end encryption
+    try:
+        private_key, public_key = generate_key_pair()
+        public_key_str = serialize_public_key(public_key)
+
+        # Store public key in database
+        user_public_key = PublicKey(
+            userID=user.userID,
+            publicKey=public_key_str,
+            algorithm="ECC-SECP256R1"
+        )
+        db.session.add(user_public_key)
+
+        # Note: Private key is NOT stored on server - it will be generated
+        # and stored on client-side in production. For now, we generate it
+        # here but don't store it (client will need to generate their own)
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": f"Failed to generate encryption keys: {str(e)}"}), 500
+
     db.session.commit()
 
     token = create_access_token(identity=str(user.userID))
@@ -74,6 +98,8 @@ def register():
             {
                 "accessToken": token,
                 "user": user.to_dict(),
+                "publicKey": public_key_str,  # Return public key to client
+                "message": "Account created. Note: In production, generate key pair on client-side."
             }
         ),
         201,

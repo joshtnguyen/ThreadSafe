@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useWebSocket } from "../context/WebSocketContext.jsx";
 import { api } from "../lib/api.js";
+import { decryptMessageComplete, importPrivateKey } from "../lib/crypto.js";
+import { getPrivateKey } from "../lib/keyStorage.js";
 
 const formatTime = (value) => {
   const date = new Date(value);
@@ -33,6 +35,8 @@ export default function ChatPage() {
   const [isAddingFriend, setIsAddingFriend] = useState(false);
   const [isOpeningChat, setIsOpeningChat] = useState(false);
   const [friendMenuOpen, setFriendMenuOpen] = useState(null);
+  const [privateKey, setPrivateKey] = useState(null);
+  const [decryptedMessages, setDecryptedMessages] = useState({});
 
   const messageEndRef = useRef(null);
 
@@ -40,6 +44,23 @@ export default function ChatPage() {
     () => conversations.find((conversation) => conversation.id === selectedId),
     [conversations, selectedId],
   );
+
+  // Load private key on mount
+  useEffect(() => {
+    async function loadPrivateKey() {
+      try {
+        const privateKeyPem = getPrivateKey();
+        if (privateKeyPem) {
+          const key = await importPrivateKey(privateKeyPem);
+          setPrivateKey(key);
+        }
+      } catch (error) {
+        console.error("Failed to load private key:", error);
+        setFeedback("Failed to load encryption keys. Messages may not decrypt properly.");
+      }
+    }
+    loadPrivateKey();
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -112,6 +133,38 @@ export default function ChatPage() {
     };
   }, [selectedId, token]);
 
+  // Decrypt messages when they load or private key becomes available
+  useEffect(() => {
+    if (!privateKey || messages.length === 0) {
+      return;
+    }
+
+    async function decryptMessages() {
+      for (const message of messages) {
+        // Skip if already decrypted or missing encryption data
+        if (decryptedMessages[message.id] || !message.encrypted_aes_key || !message.ephemeral_public_key) {
+          continue;
+        }
+
+        try {
+          const plaintext = await decryptMessageComplete(message, privateKey);
+          setDecryptedMessages((prev) => ({
+            ...prev,
+            [message.id]: plaintext,
+          }));
+        } catch (error) {
+          console.error(`Failed to decrypt message ${message.id}:`, error);
+          setDecryptedMessages((prev) => ({
+            ...prev,
+            [message.id]: "[Decryption failed]",
+          }));
+        }
+      }
+    }
+
+    decryptMessages();
+  }, [messages, privateKey, decryptedMessages]);
+
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -128,7 +181,25 @@ export default function ChatPage() {
 
   // Listen for real-time incoming messages
   useEffect(() => {
-    const unsubscribe = onMessageReceived((message) => {
+    const unsubscribe = onMessageReceived(async (message) => {
+      // Decrypt the incoming message immediately if we have a private key
+      if (privateKey && message.encrypted_aes_key && message.ephemeral_public_key) {
+        try {
+          const plaintext = await decryptMessageComplete(message, privateKey);
+          // Store decrypted content
+          setDecryptedMessages((prev) => ({
+            ...prev,
+            [message.id]: plaintext,
+          }));
+        } catch (error) {
+          console.error(`Failed to decrypt incoming message ${message.id}:`, error);
+          setDecryptedMessages((prev) => ({
+            ...prev,
+            [message.id]: "[Decryption failed]",
+          }));
+        }
+      }
+
       // Only add message if it's for the currently selected conversation
       if (message.sender?.id === selectedId || message.receiver?.id === selectedId) {
         setMessages((prev) => [...prev, message]);
@@ -136,15 +207,34 @@ export default function ChatPage() {
 
       // Update conversation last message and re-sort to move to top
       setConversations((prev) => {
-        const updated = prev.map((conv) =>
-          conv.id === message.sender?.id || conv.id === message.receiver?.id
-            ? {
-                ...conv,
-                lastMessage: message,
-                updatedAt: message.sentAt,
-              }
-            : conv
-        );
+        // Find if conversation already exists
+        const otherUserId = message.isOwn ? message.receiverID : message.senderID;
+        const existingConv = prev.find((conv) => conv.id === otherUserId);
+
+        let updated;
+        if (existingConv) {
+          // Update existing conversation
+          updated = prev.map((conv) =>
+            conv.id === otherUserId
+              ? {
+                  ...conv,
+                  lastMessage: message,
+                  updatedAt: message.sentAt,
+                }
+              : conv
+          );
+        } else {
+          // Create new conversation (first message from this contact)
+          const newConversation = {
+            id: otherUserId,
+            name: message.sender?.username || "Unknown",
+            participants: [message.sender],
+            lastMessage: message,
+            updatedAt: message.sentAt,
+          };
+          updated = [newConversation, ...prev];
+        }
+
         // Sort by updatedAt descending (newest first)
         return updated.sort((a, b) => {
           const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
@@ -154,7 +244,7 @@ export default function ChatPage() {
       });
     });
     return unsubscribe;
-  }, [onMessageReceived, selectedId]);
+  }, [onMessageReceived, selectedId, privateKey]);
 
   // Listen for real-time friend requests
   useEffect(() => {
@@ -210,6 +300,7 @@ export default function ChatPage() {
     try {
       const response = await api.sendMessage(token, selectedId, messageDraft.trim());
       const newMessage = response.message;
+
       setMessages((previous) => [...previous, newMessage]);
       setConversations((previous) => {
         const updated = previous.map((conversation) =>
@@ -565,7 +656,11 @@ export default function ChatPage() {
               </p>
             ) : (
               conversations.map((conversation) => {
-                const preview = conversation.lastMessage?.content ?? "No messages yet.";
+                // Show decrypted preview if available, otherwise encrypted preview
+                const lastMsg = conversation.lastMessage;
+                const preview = lastMsg
+                  ? (decryptedMessages[lastMsg.id] || lastMsg.content || "Encrypted message")
+                  : "No messages yet.";
                 return (
                   <button
                     key={conversation.id}
@@ -604,18 +699,24 @@ export default function ChatPage() {
           <div className="message-list">
             {selectedConversation ? (
               messages.length ? (
-                messages.map((message) => (
-                  <article
-                    key={message.id}
-                    className={`message-bubble ${message.isOwn ? "own" : "their"}`}
-                  >
-                    <span className="bubble-meta" title={message.isOwn ? "You" : message.sender.username}>
-                      {message.isOwn ? "You" : message.sender.username}
-                    </span>
-                    <p className="bubble-text">{message.content}</p>
-                    <time className="bubble-time">{formatTime(message.sentAt)}</time>
-                  </article>
-                ))
+                messages.map((message) => {
+                  // All messages are now decryptable (including our own sent messages!)
+                  const displayContent = decryptedMessages[message.id] ||
+                    (privateKey ? "Decrypting..." : message.content);
+
+                  return (
+                    <article
+                      key={message.id}
+                      className={`message-bubble ${message.isOwn ? "own" : "their"}`}
+                    >
+                      <span className="bubble-meta" title={message.isOwn ? "You" : message.sender.username}>
+                        {message.isOwn ? "You" : message.sender.username}
+                      </span>
+                      <p className="bubble-text">{displayContent}</p>
+                      <time className="bubble-time">{formatTime(message.sentAt)}</time>
+                    </article>
+                  );
+                })
               ) : (
                 <p className="placeholder">No messages yet. Say hello!</p>
               )

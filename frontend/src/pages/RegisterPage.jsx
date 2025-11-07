@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../context/AuthContext.jsx";
 import { api } from "../lib/api.js";
+import { generateKeyPair, exportPublicKey, exportPrivateKey } from "../lib/crypto.js";
+import { storePrivateKey, storePublicKey } from "../lib/keyStorage.js";
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -73,7 +75,22 @@ export default function RegisterPage() {
     setIsSubmitting(true);
 
     try {
+      // Step 1: Generate ECC key pair client-side
+      const keyPair = await generateKeyPair();
+      const publicKeyPem = await exportPublicKey(keyPair.publicKey);
+      const privateKeyPem = await exportPrivateKey(keyPair.privateKey);
+
+      // Step 2: Register account (backend will generate its own keys initially)
       const response = await api.register(form);
+
+      // Step 3: Store private key locally (NEVER send to server!)
+      storePrivateKey(privateKeyPem);
+      storePublicKey(publicKeyPem);
+
+      // Step 4: Update backend with our client-generated public key
+      await api.rotatePublicKey(response.accessToken, publicKeyPem);
+
+      // Step 5: Login
       login(response.user, response.accessToken);
       navigate("/app");
     } catch (err) {

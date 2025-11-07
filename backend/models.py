@@ -343,9 +343,20 @@ class Message(db.Model):
         nullable=True,
         index=True,
     )
+    # Recipient's encrypted copy
     encryptedContent = db.Column(db.Text, nullable=False)
     iv = db.Column(db.String(255), nullable=False)  # Initialization Vector
-    hmac = db.Column(db.String(255), nullable=False)  # HMAC for integrity
+    hmac = db.Column(db.String(255), nullable=False)  # HMAC for integrity (auth tag for GCM)
+    encrypted_aes_key = db.Column(db.Text, nullable=True)  # Encrypted AES key (for hybrid encryption)
+    ephemeral_public_key = db.Column(db.Text, nullable=True)  # Ephemeral public key (for ECIES)
+
+    # Sender's encrypted copy (so they can read their own messages)
+    sender_encrypted_content = db.Column(db.Text, nullable=True)
+    sender_iv = db.Column(db.String(255), nullable=True)
+    sender_hmac = db.Column(db.String(255), nullable=True)
+    sender_encrypted_aes_key = db.Column(db.Text, nullable=True)
+    sender_ephemeral_public_key = db.Column(db.Text, nullable=True)
+
     status = db.Column(db.String(20), default="Sent")  # 'Sent', 'Delivered', 'Read'
     msg_Type = db.Column(db.String(20), nullable=False)  # 'text', 'image'
     timeStamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
@@ -364,15 +375,14 @@ class Message(db.Model):
 
     def to_dict(self, current_user_id: int | None = None) -> dict[str, object]:
         """Serialize message for API response."""
-        return {
+        # Return appropriate encrypted version based on who's requesting
+        is_sender = self.senderID == current_user_id if current_user_id else False
+
+        result = {
             "id": self.msgID,
             "senderID": self.senderID,
             "receiverID": self.receiverID,
             "groupChatID": self.groupChatID,
-            "encryptedContent": self.encryptedContent,
-            "content": self.encryptedContent,  # Backward compatibility
-            "iv": self.iv,
-            "hmac": self.hmac,
             "status": self.status,
             "msgType": self.msg_Type,
             "timestamp": self.timeStamp.isoformat() if self.timeStamp else None,
@@ -380,8 +390,31 @@ class Message(db.Model):
             "expiryTime": self.expiryTime.isoformat() if self.expiryTime else None,
             "isExpired": self.is_expired(),
             "sender": self.sender.to_dict() if self.sender else None,
-            "isOwn": self.senderID == current_user_id if current_user_id else None,
+            "isOwn": is_sender,
         }
+
+        # If user is the sender, return sender's encrypted copy
+        if is_sender and self.sender_encrypted_content:
+            result.update({
+                "encryptedContent": self.sender_encrypted_content,
+                "content": self.sender_encrypted_content,
+                "iv": self.sender_iv,
+                "hmac": self.sender_hmac,
+                "encrypted_aes_key": self.sender_encrypted_aes_key,
+                "ephemeral_public_key": self.sender_ephemeral_public_key,
+            })
+        else:
+            # Return recipient's encrypted copy
+            result.update({
+                "encryptedContent": self.encryptedContent,
+                "content": self.encryptedContent,
+                "iv": self.iv,
+                "hmac": self.hmac,
+                "encrypted_aes_key": self.encrypted_aes_key,
+                "ephemeral_public_key": self.ephemeral_public_key,
+            })
+
+        return result
 
     @staticmethod
     def default_expiry_time(is_group: bool = False) -> datetime:

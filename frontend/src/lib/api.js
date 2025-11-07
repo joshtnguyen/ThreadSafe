@@ -59,4 +59,10 @@ export const api = {
     request(`/friends/requests/${requesterId}/reject`, { method: "DELETE", token }),
   deleteFriend: (token, friendId) =>
     request(`/friends/${friendId}`, { method: "DELETE", token }),
+  rotatePublicKey: (token, publicKey) =>
+    request("/keys/rotate", {
+      method: "PUT",
+      token,
+      body: { publicKey, algorithm: "ECC-SECP256R1" },
+    }),
 };

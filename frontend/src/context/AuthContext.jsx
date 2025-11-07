@@ -36,6 +36,9 @@ export function AuthProvider({ children }) {
     setToken(null);
     sessionStorage.removeItem("user");
     sessionStorage.removeItem("accessToken");
+    // Clear encryption keys on logout
+    sessionStorage.removeItem("privateKey");
+    sessionStorage.removeItem("publicKey");
   }, []);
 
   const value = useMemo(
