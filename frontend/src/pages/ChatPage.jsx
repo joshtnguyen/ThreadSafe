@@ -376,14 +376,14 @@ export default function ChatPage() {
           if (exists) return previous;
           return [...previous, friend].sort((a, b) => a.username.localeCompare(b.username));
         });
-        setFeedback(`✓ ${response.message || "Now friends!"}`);
+        setFeedback(` ${response.message || "Now friends!"}`);
       } else if (status === "pending") {
         // Request sent - add to outgoing requests
         setFriendRequests((prev) => ({
           ...prev,
           outgoing: [...prev.outgoing, { requestId: friend.id, user: friend }],
         }));
-        setFeedback(`✓ ${response.message || "Friend request sent."}`);
+        setFeedback(` ${response.message || "Friend request sent."}`);
       }
       setAddFriendUsername("");
     } catch (error) {
@@ -409,7 +409,7 @@ export default function ChatPage() {
         if (exists) return previous;
         return [...previous, newFriend].sort((a, b) => a.username.localeCompare(b.username));
       });
-      setFeedback(`✓ ${response.message || "Friend request accepted!"}`);
+      setFeedback(` ${response.message || "Friend request accepted!"}`);
     } catch (error) {
       setFeedback(error.message);
     }
@@ -424,7 +424,7 @@ export default function ChatPage() {
         ...prev,
         incoming: prev.incoming.filter((req) => req.requestId !== requesterId),
       }));
-      setFeedback("✓ Friend request rejected.");
+      setFeedback(" Friend request rejected.");
     } catch (error) {
       setFeedback(error.message);
     }
@@ -437,7 +437,7 @@ export default function ChatPage() {
       setFriends((previous) => previous.filter((friend) => friend.id !== friendId));
       setFriendMenuOpen(null);
       // Keep conversation selected - chat history is still viewable
-      setFeedback("✓ Friend removed. Chat history preserved.");
+      setFeedback(" Friend removed. Chat history preserved.");
     } catch (error) {
       setFeedback(error.message);
     }
