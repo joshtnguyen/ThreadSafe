@@ -541,6 +541,13 @@ input {
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.12);
   color: inherit;
+  min-height: 48px;
+  max-height: 200px;
+  resize: vertical;
+  overflow-y: auto;
+  font-family: inherit;
+  font-size: 1rem;
+  line-height: 1.45;
 }
 
 .composer-input:disabled {
@@ -553,6 +560,14 @@ input {
   background: black;
   color: white;
   font-size: 1.2rem;
+}
+
+.character-counter {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: right;
+  padding: 4px 12px 8px;
+  margin: 0;
 }
 
 .bottom-tab-bar {

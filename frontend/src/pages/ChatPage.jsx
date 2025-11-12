@@ -732,12 +732,20 @@ export default function ChatPage() {
             <span ref={messageEndRef} />
           </div>
           <form className="composer" onSubmit={handleSendMessage}>
-            <input
+            <textarea
               className="composer-input"
-              placeholder="Your message"
+              placeholder="Type Your Message..."
               value={messageDraft}
               disabled={!selectedConversation}
               onChange={(event) => setMessageDraft(event.target.value)}
+              maxLength={2000}
+              rows={1}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  handleSendMessage(event);
+                }
+              }}
             />
             <button
               className="composer-send"
@@ -747,6 +755,11 @@ export default function ChatPage() {
               {isSending ? "…" : "➤"}
             </button>
           </form>
+          {selectedConversation && (
+            <p className="character-counter">
+              {messageDraft.length}/2000 characters
+            </p>
+          )}
           {feedback ? <p className="form-error banner">{feedback}</p> : null}
         </section>
       </div>
