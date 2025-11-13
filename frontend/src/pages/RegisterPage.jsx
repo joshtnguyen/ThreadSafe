@@ -104,11 +104,11 @@ export default function RegisterPage() {
     <main className="auth-shell">
       <section className="auth-card">
         <div className="auth-header">
-          <span className="auth-logo">Create account</span>
+          <span className="auth-logo">Create Account</span>
         </div>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label className="field">
-            <span className="field-label">Account User's Name</span>
+            <span className="field-label">Full Name</span>
             <input
               name="displayName"
               value={form.displayName}
