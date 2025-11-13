@@ -79,6 +79,84 @@ def list_friend_requests():
     }), 200
 
 
+@friends_bp.get("/blocked")
+@jwt_required()
+def list_blocked_users():
+    """Return users the current user has blocked."""
+    current_user_id = _safe_identity()
+    blocked_contacts = Contact.query.filter_by(
+        userID=current_user_id,
+        contactStatus="Blocked"
+    ).all()
+
+    blocked_users = [
+        entry.contact_user.to_dict()
+        for entry in blocked_contacts
+        if entry.contact_user is not None
+    ]
+
+    blocked_users.sort(key=lambda entry: entry["username"].lower())
+
+    return jsonify({"blocked": blocked_users}), 200
+
+
+@friends_bp.get("/search")
+@jwt_required()
+def search_user():
+    """Search for an exact username and return current relationship state."""
+    current_user_id = _safe_identity()
+    username = (request.args.get("username") or "").strip()
+
+    if not username:
+        return jsonify({"message": "Username is required."}), 400
+
+    target_user = User.query.filter_by(username=username).first()
+    if not target_user:
+        return jsonify({"message": "User not found."}), 404
+
+    if target_user.userID == current_user_id:
+        return jsonify({
+            "user": target_user.to_dict(),
+            "relationshipStatus": "self",
+            "requestId": None,
+        }), 200
+
+    outgoing = Contact.query.filter_by(
+        userID=current_user_id,
+        contact_userID=target_user.userID
+    ).first()
+    incoming = Contact.query.filter_by(
+        userID=target_user.userID,
+        contact_userID=current_user_id
+    ).first()
+
+    status = "none"
+    request_id = None
+
+    if (
+        (outgoing and outgoing.contactStatus == "Blocked") or
+        (incoming and incoming.contactStatus == "Blocked")
+    ):
+        status = "blocked"
+    elif (
+        (outgoing and outgoing.contactStatus == "Accepted") or
+        (incoming and incoming.contactStatus == "Accepted")
+    ):
+        status = "friends"
+    elif outgoing and outgoing.contactStatus == "Pending":
+        status = "pending_outgoing"
+        request_id = target_user.userID
+    elif incoming and incoming.contactStatus == "Pending":
+        status = "pending_incoming"
+        request_id = incoming.userID
+
+    return jsonify({
+        "user": target_user.to_dict(),
+        "relationshipStatus": status,
+        "requestId": request_id,
+    }), 200
+
+
 @friends_bp.post("")
 @jwt_required()
 def add_friend():
@@ -165,6 +243,101 @@ def add_friend():
         "status": "pending",
         "message": "Friend request sent."
     }), 201
+
+
+@friends_bp.post("/block")
+@jwt_required()
+def block_user():
+    """Block a user by username."""
+    current_user_id = _safe_identity()
+    payload = request.get_json(silent=True) or {}
+    username = (payload.get("username") or "").strip()
+
+    if not username:
+        return jsonify({"message": "Username is required."}), 400
+
+    target_user = User.query.filter_by(username=username).first()
+
+    if not target_user:
+        return jsonify({"message": "User not found."}), 404
+    if target_user.userID == current_user_id:
+        return jsonify({"message": "You cannot block yourself."}), 400
+
+    outgoing = Contact.query.filter_by(
+        userID=current_user_id,
+        contact_userID=target_user.userID
+    ).first()
+    if not outgoing:
+        outgoing = Contact(
+            userID=current_user_id,
+            contact_userID=target_user.userID,
+        )
+        db.session.add(outgoing)
+    outgoing.contactStatus = "Blocked"
+
+    incoming = Contact.query.filter_by(
+        userID=target_user.userID,
+        contact_userID=current_user_id
+    ).first()
+    if not incoming:
+        incoming = Contact(
+            userID=target_user.userID,
+            contact_userID=current_user_id,
+        )
+        db.session.add(incoming)
+    incoming.contactStatus = "Blocked"
+
+    db.session.commit()
+
+    return jsonify({
+        "message": f"Blocked {target_user.username}.",
+        "user": target_user.to_dict(),
+    }), 200
+
+
+@friends_bp.post("/unblock")
+@jwt_required()
+def unblock_user():
+    """Unblock a previously blocked user by username."""
+    current_user_id = _safe_identity()
+    payload = request.get_json(silent=True) or {}
+    username = (payload.get("username") or "").strip()
+
+    if not username:
+        return jsonify({"message": "Username is required."}), 400
+
+    target_user = User.query.filter_by(username=username).first()
+    if not target_user:
+        return jsonify({"message": "User not found."}), 404
+    if target_user.userID == current_user_id:
+        return jsonify({"message": "You cannot unblock yourself."}), 400
+
+    outgoing = Contact.query.filter_by(
+        userID=current_user_id,
+        contact_userID=target_user.userID,
+        contactStatus="Blocked"
+    ).first()
+
+    incoming = Contact.query.filter_by(
+        userID=target_user.userID,
+        contact_userID=current_user_id,
+        contactStatus="Blocked"
+    ).first()
+
+    if not outgoing and not incoming:
+        return jsonify({"message": "User is not blocked."}), 404
+
+    if outgoing:
+        db.session.delete(outgoing)
+    if incoming:
+        db.session.delete(incoming)
+
+    db.session.commit()
+
+    return jsonify({
+        "message": f"Unblocked {target_user.username}.",
+        "user": target_user.to_dict(),
+    }), 200
 
 
 @friends_bp.post("/requests/<int:requester_id>/accept")

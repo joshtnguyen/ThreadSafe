@@ -51,8 +51,15 @@ export const api = {
     }),
   friends: (token) => request("/friends", { token }),
   friendRequests: (token) => request("/friends/requests", { token }),
+  blockedFriends: (token) => request("/friends/blocked", { token }),
   addFriend: (token, username) =>
     request("/friends", { method: "POST", token, body: { username } }),
+  searchUser: (token, username) =>
+    request(`/friends/search?username=${encodeURIComponent(username)}`, { token }),
+  blockUser: (token, username) =>
+    request("/friends/block", { method: "POST", token, body: { username } }),
+  unblockUser: (token, username) =>
+    request("/friends/unblock", { method: "POST", token, body: { username } }),
   acceptFriendRequest: (token, requesterId) =>
     request(`/friends/requests/${requesterId}/accept`, { method: "POST", token }),
   rejectFriendRequest: (token, requesterId) =>
