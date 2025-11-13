@@ -370,24 +370,30 @@ export default function ChatPage() {
       const status = response.status;
 
       if (status === "accepted") {
-        // Automatically accepted (mutual request) - add to friends list
-        setFriends((previous) => {
-          const exists = previous.some((entry) => entry.id === friend.id);
-          if (exists) return previous;
-          return [...previous, friend].sort((a, b) => a.username.localeCompare(b.username));
-        });
+        // Automatically accepted (mutual request) or already friends
+        if (friend) {
+          // Only add to friends list if friend object exists (new friendship)
+          setFriends((previous) => {
+            const exists = previous.some((entry) => entry.id === friend.id);
+            if (exists) return previous;
+            return [...previous, friend].sort((a, b) => a.username.localeCompare(b.username));
+          });
+        }
         setFeedback(` ${response.message || "Now friends!"}`);
       } else if (status === "pending") {
         // Request sent - add to outgoing requests
-        setFriendRequests((prev) => ({
-          ...prev,
-          outgoing: [...prev.outgoing, { requestId: friend.id, user: friend }],
-        }));
+        if (friend) {
+          setFriendRequests((prev) => ({
+            ...prev,
+            outgoing: [...prev.outgoing, { requestId: friend.id, user: friend }],
+          }));
+        }
         setFeedback(` ${response.message || "Friend request sent."}`);
       }
       setAddFriendUsername("");
     } catch (error) {
       setFeedback(error.message);
+      setAddFriendUsername(""); // Clear input on error too
     } finally {
       setIsAddingFriend(false);
     }
@@ -631,7 +637,7 @@ export default function ChatPage() {
               <span className="field-label">Add friend</span>
               <input
                 name="addFriend"
-                placeholder="Username (case-sensitive) or email"
+                placeholder="Username (case-sensitive)"
                 value={addFriendUsername}
                 onChange={(event) => setAddFriendUsername(event.target.value)}
               />
