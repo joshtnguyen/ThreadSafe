@@ -781,11 +781,11 @@ input {
 
 .message-bubble {
   max-width: 62%;
-  padding: 16px;
-  border-radius: 22px;
+  padding: 6px;
+  padding-left: 10px;
+  border-radius: 15px;
   display: inline-flex;
   flex-direction: column;
-  gap: 8px;
   background: rgba(255, 255, 255, 0.08);
 }
 
@@ -812,7 +812,8 @@ input {
 }
 
 .bubble-time {
-  font-size: 0.75rem;
+  margin-right: 5px;
+  font-size: 0.5rem;
   color: rgba(255, 255, 255, 0.55);
   text-align: right;
 }
