@@ -89,11 +89,17 @@ export default function ChatPage() {
           const key = await importPrivateKey(privateKeyPem);
           setPrivateKey(key);
         } else {
-          setFeedback("No encryption keys found. You may need to re-register to decrypt messages.");
+          setToast({
+            message: "No encryption keys found. You may need to re-register to decrypt messages.",
+            tone: "error",
+          });
         }
       } catch (error) {
         console.error("Failed to load private key:", error);
-        setFeedback("Failed to load encryption keys. Messages may not decrypt properly.");
+        setToast({
+          message: "Failed to load encryption keys. Messages may not decrypt properly.",
+          tone: "error",
+        });
       }
     }
     loadPrivateKey();
@@ -150,11 +156,8 @@ export default function ChatPage() {
   useEffect(() => {
     if (!selectedId) {
       setMessages([]);
-      setFeedback(""); // Clear feedback when no conversation selected
       return;
     }
-    // Clear feedback when switching conversations
-    setFeedback("");
 
     let isMounted = true;
     async function loadMessages() {
@@ -445,7 +448,6 @@ export default function ChatPage() {
       });
     } catch (error) {
       setToast({ message: error.message, tone: "error" });
-      setAddFriendUsername(""); // Clear input on error too
     } finally {
       setIsAddingFriend(false);
     }
@@ -513,7 +515,7 @@ export default function ChatPage() {
         ...prev,
         incoming: prev.incoming.filter((req) => req.requestId !== requesterId),
       }));
-      setToast({ message: " Friend request rejected.", tone: "info" });
+      setToast({ message: "✓ Friend request rejected.", tone: "info" });
       setFriendSearchResult((previous) => {
         if (!previous || previous.user.id !== requesterId) {
           return previous;
@@ -531,8 +533,6 @@ export default function ChatPage() {
       await api.deleteFriend(token, friendId);
       setFriends((previous) => previous.filter((friend) => friend.id !== friendId));
       setFriendMenuOpen(null);
-      // Keep conversation selected - chat history is still viewable
-      setFeedback(" Friend removed. Chat history preserved.");
       // If we had a conversation with this friend selected, clear it
       if (selectedId === friendId) {
         setSelectedId(null);
@@ -763,195 +763,6 @@ export default function ChatPage() {
               </p>
             </div>
           </div>
-          <nav className="sidebar-nav">
-            {friendRequests.incoming.length > 0 && (
-              <div className="nav-section" style={{ marginBottom: "16px" }}>
-                <p className="nav-title">
-                  Friend Requests ({friendRequests.incoming.length})
-                </p>
-                <div className="nav-list">
-                  {friendRequests.incoming.map((request) => (
-                    <div
-                      key={request.requestId}
-                      style={{
-                        padding: "8px 12px",
-                        borderBottom: "1px solid #eee",
-                      }}
-                    >
-                      <div style={{ marginBottom: "8px", fontWeight: "500", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={request.user.username}>
-                        {request.user.username}
-                      </div>
-                      <div style={{ display: "flex", gap: "8px" }}>
-                        <button
-                          type="button"
-                          onClick={() => handleAcceptRequest(request.requestId)}
-                          style={{
-                            flex: 1,
-                            padding: "6px 12px",
-                            backgroundColor: "#4CAF50",
-                            color: "white",
-                            border: "none",
-                            borderRadius: "4px",
-                            cursor: "pointer",
-                            fontSize: "12px",
-                          }}
-                        >
-                          Accept
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRejectRequest(request.requestId)}
-                          style={{
-                            flex: 1,
-                            padding: "6px 12px",
-                            backgroundColor: "#f44336",
-                            color: "white",
-                            border: "none",
-                            borderRadius: "4px",
-                            cursor: "pointer",
-                            fontSize: "12px",
-                          }}
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="nav-section">
-              <p className="nav-title">Friends</p>
-              <div className="nav-list">
-                {friends.length ? (
-                  friends.map((friend) => (
-                    <div key={friend.id} className="friend-item-wrapper">
-                      <button
-                        type="button"
-                        className="nav-item"
-                        onClick={() => startConversationWith(friend.username)}
-                        disabled={isOpeningChat}
-                        title={friend.username}
-                      >
-                        <span className="nav-avatar">
-                          {friend.username.charAt(0).toUpperCase()}
-                        </span>
-                        <span className="nav-label">
-                          {friend.username}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setFriendMenuOpen(friendMenuOpen === friend.id ? null : friend.id);
-                        }}
-                        style={{
-                          position: "absolute",
-                          right: "8px",
-                          top: "50%",
-                          transform: "translateY(-50%)",
-                          background: "transparent",
-                          border: "none",
-                          cursor: "pointer",
-                          fontSize: "18px",
-                          padding: "4px 8px",
-                          color: "#666",
-                        }}
-                      >
-                        ⋮
-                      </button>
-                      {friendMenuOpen === friend.id && (
-                        <div
-                          style={{
-                            position: "absolute",
-                            right: "8px",
-                            top: "100%",
-                            backgroundColor: "white",
-                            border: "1px solid #ddd",
-                            borderRadius: "4px",
-                            boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-                            zIndex: 1000,
-                            minWidth: "120px",
-                          }}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (window.confirm(`Remove ${friend.username} from friends?`)) {
-                                handleDeleteFriend(friend.id);
-                              }
-                            }}
-                            style={{
-                              width: "100%",
-                              padding: "8px 12px",
-                              border: "none",
-                              background: "transparent",
-                              textAlign: "left",
-                              cursor: "pointer",
-                              color: "#d32f2f",
-                            }}
-                            onMouseEnter={(e) => e.target.style.backgroundColor = "#f5f5f5"}
-                            onMouseLeave={(e) => e.target.style.backgroundColor = "transparent"}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <p className="nav-empty">No friends yet</p>
-                )}
-              </div>
-            </div>
-            {friendRequests.outgoing.length > 0 && (
-              <div className="nav-section" style={{ marginTop: "8px" }}>
-                <p className="nav-title" style={{ fontSize: "12px", color: "#666" }}>
-                  Pending ({friendRequests.outgoing.length})
-                </p>
-                <div className="nav-list">
-                  {friendRequests.outgoing.map((request) => (
-                    <div
-                      key={request.requestId}
-                      style={{
-                        padding: "6px 12px",
-                        fontSize: "13px",
-                        color: "#999",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }} title={request.user.username}>{request.user.username}</span>
-                      <span style={{ fontSize: "11px", flexShrink: 0, marginLeft: "8px" }}>⏳ Pending</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </nav>
-          <form className="sidebar-start-chat" onSubmit={handleAddFriend}>
-            <label className="field ghost">
-              <span className="field-label">Add friend</span>
-              <input
-                name="addFriend"
-                placeholder="Username (case-sensitive)"
-                value={addFriendUsername}
-                onChange={(event) => setAddFriendUsername(event.target.value)}
-              />
-            </label>
-            <button
-              className="ghost-button"
-              type="submit"
-              disabled={isAddingFriend}
-            >
-              {isAddingFriend ? "Adding..." : "Add friend"}
-            </button>
-          </form>
-          <button className="sidebar-logout" type="button" onClick={logout}>
-            Log out
-          </button>
           <button
             type="button"
             className={`sidebar-icon ${isFriendDropdownOpen ? "active" : ""}`}

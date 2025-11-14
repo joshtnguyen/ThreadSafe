@@ -1,68 +1,43 @@
 """
-Helper module to emit WebSocket events to the relay server.
+Helper module to emit events to the relay server over HTTP.
 """
-import socketio
+from __future__ import annotations
 
-# Create a SocketIO client to connect to relay server
-sio = socketio.Client()
-RELAY_SERVER_URL = 'http://localhost:5001'
+import os
+import requests
 
-try:
-    sio.connect(RELAY_SERVER_URL)
-    print(f'Connected to TLS relay server at {RELAY_SERVER_URL}')
-except Exception as e:
-    print(f'WARNING: Could not connect to TLS relay server: {e}')
-    print('  Real-time features will not work. Start relay_server_TLS.py on port 5001.')
+RELAY_SERVER_URL = os.environ.get("RELAY_API_URL", "http://localhost:5001")
+RELAY_API_TOKEN = os.environ.get("RELAY_API_TOKEN", "dev-relay-token")
+
+
+def _post(path: str, payload: dict):
+    try:
+        response = requests.post(
+            f"{RELAY_SERVER_URL}{path}",
+            json=payload,
+            headers={"X-Relay-Token": RELAY_API_TOKEN},
+            timeout=2,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        print(f"WARNING: Relay call to {path} failed: {exc}")
 
 
 def emit_new_message(receiver_id: int, message: dict):
     """Emit a new message event to the relay server."""
-    try:
-        if sio.connected:
-            sio.emit('new_message', {
-                'receiverId': receiver_id,
-                'message': message
-            })
-    except Exception as e:
-        print(f'Error emitting message: {e}')
+    _post("/relay/message", {"receiverId": receiver_id, "message": message})
 
 
 def emit_friend_request(recipient_id: int, request_data: dict):
     """Emit a friend request notification."""
-    try:
-        if sio.connected:
-            sio.emit('friend_request', {
-                'recipientId': recipient_id,
-                'request': request_data
-            })
-    except Exception as e:
-        print(f'Error emitting friend request: {e}')
+    _post("/relay/friend-request", {"recipientId": recipient_id, "request": request_data})
 
 
 def emit_friend_request_accepted(requester_id: int, friend_data: dict):
     """Emit a friend request accepted notification."""
-    try:
-        if sio.connected:
-            sio.emit('friend_request_accepted', {
-                'requesterId': requester_id,
-                'friend': friend_data
-            })
-    except Exception as e:
-        print(f'Error emitting friend acceptance: {e}')
+    _post("/relay/friend-accepted", {"requesterId": requester_id, "friend": friend_data})
 
 
 def emit_friend_deleted(friend_id: int, deleter_data: dict):
     """Emit a friend deletion notification."""
-    try:
-        if sio.connected:
-            sio.emit('friend_deleted', {
-                'friendId': friend_id,
-                'deleter': deleter_data
-            })
-    except Exception as e:
-        print(f'Error emitting friend deletion: {e}')
-
-
-def is_connected():
-    """Check if connected to relay server."""
-    return sio.connected
+    _post("/relay/friend-deleted", {"friendId": friend_id, "deleter": deleter_data})

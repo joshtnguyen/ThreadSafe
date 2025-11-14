@@ -3,18 +3,39 @@ TLS Relay Server - Port 5001
 Handles real-time encrypted message routing without decryption capability.
 Zero-knowledge relay server for end-to-end encrypted messaging.
 """
-from flask import Flask, request
+import os
+from flask import Flask, request, abort, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
+DEFAULT_ORIGINS = [
+    os.environ.get("FRONTEND_ORIGIN"),
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+ALLOWED_ORIGINS = [origin for origin in DEFAULT_ORIGINS if origin]
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'websocket-relay-secret'
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS or "*"}})
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(
+    app,
+    cors_allowed_origins=ALLOWED_ORIGINS or "*",
+    async_mode='eventlet'
+)
 
 # Track connected users: {user_id: session_id}
 connected_users = {}
+API_TOKEN = os.environ.get("RELAY_API_TOKEN", "dev-relay-token")
+
+
+def _verify_api_request():
+    token = request.headers.get("X-Relay-Token")
+    if token != API_TOKEN:
+        abort(401)
+    if request.remote_addr not in {"127.0.0.1", "::1"}:
+        abort(403)
 
 
 @socketio.on('connect')
@@ -109,6 +130,54 @@ def handle_friend_deleted(data):
 def health():
     """Health check endpoint."""
     return {'status': 'ok', 'connected_users': len(connected_users)}, 200
+
+
+@app.post('/relay/message')
+def relay_message_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    receiver_id = data.get('receiverId')
+    message = data.get('message')
+    if not receiver_id or not message:
+        return jsonify({'message': 'receiverId and message required'}), 400
+    socketio.emit('message_received', {'message': message}, room=f'user_{receiver_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/friend-request')
+def relay_friend_request_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    recipient_id = data.get('recipientId')
+    request_payload = data.get('request')
+    if not recipient_id or not request_payload:
+        return jsonify({'message': 'recipientId and request required'}), 400
+    socketio.emit('friend_request_received', {'request': request_payload}, room=f'user_{recipient_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/friend-accepted')
+def relay_friend_accepted_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    requester_id = data.get('requesterId')
+    friend_data = data.get('friend')
+    if not requester_id or not friend_data:
+        return jsonify({'message': 'requesterId and friend required'}), 400
+    socketio.emit('friend_request_accepted_event', {'friend': friend_data}, room=f'user_{requester_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/friend-deleted')
+def relay_friend_deleted_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    friend_id = data.get('friendId')
+    deleter = data.get('deleter')
+    if not friend_id or not deleter:
+        return jsonify({'message': 'friendId and deleter required'}), 400
+    socketio.emit('friend_deleted_event', {'deleter': deleter}, room=f'user_{friend_id}')
+    return jsonify({'status': 'ok'}), 200
 
 
 if __name__ == '__main__':

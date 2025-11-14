@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../context/AuthContext.jsx";
 import { api } from "../lib/api.js";
+import { generateKeyPair, exportPrivateKey, exportPublicKey } from "../lib/crypto.js";
+import { getPrivateKey, getPublicKey, storePrivateKey, storePublicKey } from "../lib/keyStorage.js";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -23,12 +25,46 @@ export default function LoginPage() {
 
     try {
       const response = await api.login(form);
+      await ensureEncryptionKeys(response.user.id, response.accessToken);
       login(response.user, response.accessToken);
       navigate("/app");
     } catch (err) {
       setError(err.message);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const ensureEncryptionKeys = async (userId, accessToken) => {
+    let privateKeyPem = getPrivateKey(userId);
+    let publicKeyPem = getPublicKey(userId);
+
+    if (!privateKeyPem || !publicKeyPem) {
+      const keyPair = await generateKeyPair();
+      publicKeyPem = await exportPublicKey(keyPair.publicKey);
+      privateKeyPem = await exportPrivateKey(keyPair.privateKey);
+      storePrivateKey(privateKeyPem, userId);
+      storePublicKey(publicKeyPem, userId);
+
+      try {
+        await api.rotatePublicKey(accessToken, publicKeyPem);
+      } catch (rotationError) {
+        if (rotationError.message.includes("No existing key")) {
+          await api.registerPublicKey(accessToken, publicKeyPem);
+        } else {
+          throw rotationError;
+        }
+      }
+    } else {
+      try {
+        await api.myPublicKey(accessToken);
+      } catch (error) {
+        if (error.message.includes("not registered")) {
+          await api.registerPublicKey(accessToken, publicKeyPem);
+        } else {
+          throw error;
+        }
+      }
     }
   };
 

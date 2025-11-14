@@ -93,6 +93,14 @@ docker-compose up
    pip install -r requirements.txt
    ```
 
+5. **(Only needed when upgrading an existing database)**  
+   The latest encryption features require new columns in the `message` table.
+   If you created your SQLite DB before pulling these changes, run:
+   ```bash
+   python scripts/upgrade_message_schema.py
+   ```
+   This safely adds the missing columns in-place.
+
 5. Database setup (SQLite - automatic):
    - The database is created automatically on first run using SQLAlchemy
    - Tables are auto-generated from models in `backend/models.py`

@@ -1,5 +1,5 @@
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000/api";
+  import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 async function request(path, { method = "GET", token, body } = {}) {
   const headers = {
@@ -72,4 +72,11 @@ export const api = {
       token,
       body: { publicKey, algorithm: "ECC-SECP256R1" },
     }),
+  registerPublicKey: (token, publicKey) =>
+    request("/keys/register", {
+      method: "POST",
+      token,
+      body: { publicKey, algorithm: "ECC-SECP256R1" },
+    }),
+  myPublicKey: (token) => request("/keys/my-key", { token }),
 };

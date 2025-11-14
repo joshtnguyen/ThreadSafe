@@ -6,5 +6,6 @@ Flask-SocketIO>=5.3
 python-dotenv>=1.0
 python-socketio>=5.10
 eventlet>=0.33
+websocket-client>=1.8
 requests>=2.31
 cryptography>=41.0

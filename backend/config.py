@@ -16,6 +16,7 @@ class Config:
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=12)
+    FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173")
 
 
 __all__ = ["Config"]
