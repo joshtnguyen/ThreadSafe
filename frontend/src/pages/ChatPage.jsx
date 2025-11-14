@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useWebSocket } from "../context/WebSocketContext.jsx";
 import { api } from "../lib/api.js";
+import { decryptMessageComplete, importPrivateKey } from "../lib/crypto.js";
+import { getPrivateKey } from "../lib/keyStorage.js";
 
 const parseTimestamp = (value) => {
   if (!value) {
@@ -27,6 +29,13 @@ const getTimestampMs = (value) => {
   return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
 };
 
+// Utility component for truncated username display with tooltip
+const TruncatedUsername = ({ username, className = "" }) => (
+  <span className={`truncate-text ${className}`} title={username}>
+    {username}
+  </span>
+);
+
 export default function ChatPage() {
   const { user, token, logout } = useAuth();
   const { onMessageReceived, onFriendRequest, onFriendRequestAccepted, onFriendDeleted } = useWebSocket();
@@ -43,6 +52,8 @@ export default function ChatPage() {
   const [isAddingFriend, setIsAddingFriend] = useState(false);
   const [isOpeningChat, setIsOpeningChat] = useState(false);
   const [friendMenuOpen, setFriendMenuOpen] = useState(null);
+  const [privateKey, setPrivateKey] = useState(null);
+  const [decryptedMessages, setDecryptedMessages] = useState({});
   const [isFriendDropdownOpen, setIsFriendDropdownOpen] = useState(false);
   const [friendSearchQuery, setFriendSearchQuery] = useState("");
   const [friendSearchResult, setFriendSearchResult] = useState(null);
@@ -68,6 +79,25 @@ export default function ChatPage() {
     () => conversations.find((conversation) => conversation.id === selectedId),
     [conversations, selectedId],
   );
+
+  // Load private key on mount
+  useEffect(() => {
+    async function loadPrivateKey() {
+      try {
+        const privateKeyPem = getPrivateKey(user.id);
+        if (privateKeyPem) {
+          const key = await importPrivateKey(privateKeyPem);
+          setPrivateKey(key);
+        } else {
+          setFeedback("No encryption keys found. You may need to re-register to decrypt messages.");
+        }
+      } catch (error) {
+        console.error("Failed to load private key:", error);
+        setFeedback("Failed to load encryption keys. Messages may not decrypt properly.");
+      }
+    }
+    loadPrivateKey();
+  }, [user.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -120,8 +150,12 @@ export default function ChatPage() {
   useEffect(() => {
     if (!selectedId) {
       setMessages([]);
+      setFeedback(""); // Clear feedback when no conversation selected
       return;
     }
+    // Clear feedback when switching conversations
+    setFeedback("");
+
     let isMounted = true;
     async function loadMessages() {
       try {
@@ -140,6 +174,42 @@ export default function ChatPage() {
       isMounted = false;
     };
   }, [selectedId, token]);
+
+  // Decrypt messages when they load or private key becomes available
+  useEffect(() => {
+    if (!privateKey || messages.length === 0) {
+      return;
+    }
+
+    async function decryptMessages() {
+      const newDecryptions = {};
+
+      for (const message of messages) {
+        // Skip if missing encryption data
+        if (!message.encrypted_aes_key || !message.ephemeral_public_key) {
+          continue;
+        }
+
+        try {
+          const plaintext = await decryptMessageComplete(message, privateKey);
+          newDecryptions[message.id] = plaintext;
+        } catch (error) {
+          console.error(`Failed to decrypt message ${message.id}:`, error);
+          newDecryptions[message.id] = "[Decryption failed]";
+        }
+      }
+
+      // Update all decrypted messages at once
+      if (Object.keys(newDecryptions).length > 0) {
+        setDecryptedMessages((prev) => ({
+          ...prev,
+          ...newDecryptions,
+        }));
+      }
+    }
+
+    decryptMessages();
+  }, [messages, privateKey]);
 
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -166,7 +236,25 @@ export default function ChatPage() {
 
   // Listen for real-time incoming messages
   useEffect(() => {
-    const unsubscribe = onMessageReceived((message) => {
+    const unsubscribe = onMessageReceived(async (message) => {
+      // Decrypt the incoming message immediately if we have a private key
+      if (privateKey && message.encrypted_aes_key && message.ephemeral_public_key) {
+        try {
+          const plaintext = await decryptMessageComplete(message, privateKey);
+          // Store decrypted content
+          setDecryptedMessages((prev) => ({
+            ...prev,
+            [message.id]: plaintext,
+          }));
+        } catch (error) {
+          console.error(`Failed to decrypt incoming message ${message.id}:`, error);
+          setDecryptedMessages((prev) => ({
+            ...prev,
+            [message.id]: "[Decryption failed]",
+          }));
+        }
+      }
+
       // Only add message if it's for the currently selected conversation
       if (message.sender?.id === selectedId || message.receiver?.id === selectedId) {
         setMessages((prev) => [...prev, message]);
@@ -174,21 +262,40 @@ export default function ChatPage() {
 
       // Update conversation last message and re-sort to move to top
       setConversations((prev) => {
-        const updated = prev.map((conv) =>
-          conv.id === message.sender?.id || conv.id === message.receiver?.id
-            ? {
-                ...conv,
-                lastMessage: message,
-                updatedAt: message.sentAt,
-              }
-            : conv
-        );
+        // Find if conversation already exists
+        const otherUserId = message.isOwn ? message.receiverID : message.senderID;
+        const existingConv = prev.find((conv) => conv.id === otherUserId);
+
+        let updated;
+        if (existingConv) {
+          // Update existing conversation
+          updated = prev.map((conv) =>
+            conv.id === otherUserId
+              ? {
+                  ...conv,
+                  lastMessage: message,
+                  updatedAt: message.sentAt,
+                }
+              : conv
+          );
+        } else {
+          // Create new conversation (first message from this contact)
+          const newConversation = {
+            id: otherUserId,
+            name: message.sender?.username || "Unknown",
+            participants: [message.sender],
+            lastMessage: message,
+            updatedAt: message.sentAt,
+          };
+          updated = [newConversation, ...prev];
+        }
+
         // Sort by updatedAt descending (newest first)
         return updated.sort((a, b) => getTimestampMs(b.updatedAt) - getTimestampMs(a.updatedAt));
       });
     });
     return unsubscribe;
-  }, [onMessageReceived, selectedId]);
+  }, [onMessageReceived, selectedId, privateKey]);
 
   // Listen for real-time friend requests
   useEffect(() => {
@@ -225,7 +332,11 @@ export default function ChatPage() {
     const unsubscribe = onFriendDeleted((deleterData) => {
       // Remove the deleter from friends list
       setFriends((prev) => prev.filter((f) => f.id !== deleterData.id));
-      setToast({ message: `${deleterData.username} removed you as a friend.`, tone: "info" });
+
+      // Keep their conversation in the list - chat history preserved
+      // Don't clear selectedId - user can still view the chat
+
+      setToast({ message: `${deleterData.username} removed you as a friend. Chat history preserved.`, tone: "info" });
     });
     return unsubscribe;
   }, [onFriendDeleted]);
@@ -240,6 +351,7 @@ export default function ChatPage() {
     try {
       const response = await api.sendMessage(token, selectedId, messageDraft.trim());
       const newMessage = response.message;
+
       setMessages((previous) => [...previous, newMessage]);
       setConversations((previous) => {
         const updated = previous.map((conversation) =>
@@ -302,20 +414,25 @@ export default function ChatPage() {
       const status = response.status;
 
       if (status === "accepted") {
-        // Automatically accepted (mutual request) - add to friends list
-        setFriends((previous) => {
-          const exists = previous.some((entry) => entry.id === friend.id);
-          if (exists) return previous;
-          return [...previous, friend].sort((a, b) => a.username.localeCompare(b.username));
-        });
-        setToast({ message: `✓ ${response.message || "Now friends!"}`, tone: "success" });
+        // Automatically accepted (mutual request) or already friends
+        if (friend) {
+          // Only add to friends list if friend object exists (new friendship)
+          setFriends((previous) => {
+            const exists = previous.some((entry) => entry.id === friend.id);
+            if (exists) return previous;
+            return [...previous, friend].sort((a, b) => a.username.localeCompare(b.username));
+          });
+        }
+        setToast({ message: ` ${response.message || "Now friends!"}`, tone: "success" });
       } else if (status === "pending") {
         // Request sent - add to outgoing requests
-        setFriendRequests((prev) => ({
-          ...prev,
-          outgoing: [...prev.outgoing, { requestId: friend.id, user: friend }],
-        }));
-        setToast({ message: `✓ ${response.message || "Friend request sent."}`, tone: "success" });
+        if (friend) {
+          setFriendRequests((prev) => ({
+            ...prev,
+            outgoing: [...prev.outgoing, { requestId: friend.id, user: friend }],
+          }));
+        }
+        setToast({ message: ` ${response.message || "Friend request sent."}`, tone: "success" });
       }
       setFriendSearchResult((previous) => {
         if (!previous || previous.user.username !== target) {
@@ -328,6 +445,7 @@ export default function ChatPage() {
       });
     } catch (error) {
       setToast({ message: error.message, tone: "error" });
+      setAddFriendUsername(""); // Clear input on error too
     } finally {
       setIsAddingFriend(false);
     }
@@ -374,7 +492,7 @@ export default function ChatPage() {
         if (exists) return previous;
         return [...previous, newFriend].sort((a, b) => a.username.localeCompare(b.username));
       });
-      setToast({ message: `✓ ${response.message || "Friend request accepted!"}`, tone: "success" });
+      setToast({ message: ` ${response.message || "Friend request accepted!"}`, tone: "success" });
       setFriendSearchResult((previous) => {
         if (!previous || previous.user.id !== newFriend.id) {
           return previous;
@@ -395,7 +513,7 @@ export default function ChatPage() {
         ...prev,
         incoming: prev.incoming.filter((req) => req.requestId !== requesterId),
       }));
-      setToast({ message: "✓ Friend request rejected.", tone: "info" });
+      setToast({ message: " Friend request rejected.", tone: "info" });
       setFriendSearchResult((previous) => {
         if (!previous || previous.user.id !== requesterId) {
           return previous;
@@ -413,6 +531,8 @@ export default function ChatPage() {
       await api.deleteFriend(token, friendId);
       setFriends((previous) => previous.filter((friend) => friend.id !== friendId));
       setFriendMenuOpen(null);
+      // Keep conversation selected - chat history is still viewable
+      setFeedback(" Friend removed. Chat history preserved.");
       // If we had a conversation with this friend selected, clear it
       if (selectedId === friendId) {
         setSelectedId(null);
@@ -634,11 +754,204 @@ export default function ChatPage() {
         <aside className="sidebar sidebar-rail">
           <div className="sidebar-profile">
             <div className="avatar">{user.displayName?.charAt(0).toUpperCase()}</div>
-            <div className="sidebar-profile-copy">
-              <h2>{user.displayName || user.username}</h2>
-              <p>@{user.username}</p>
+            <div className="sidebar-profile-copy" style={{ minWidth: 0, flex: 1 }}>
+              <h2 style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user.displayName || user.username}>
+                {user.displayName || user.username}
+              </h2>
+              <p style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`@${user.username}`}>
+                @{user.username}
+              </p>
             </div>
           </div>
+          <nav className="sidebar-nav">
+            {friendRequests.incoming.length > 0 && (
+              <div className="nav-section" style={{ marginBottom: "16px" }}>
+                <p className="nav-title">
+                  Friend Requests ({friendRequests.incoming.length})
+                </p>
+                <div className="nav-list">
+                  {friendRequests.incoming.map((request) => (
+                    <div
+                      key={request.requestId}
+                      style={{
+                        padding: "8px 12px",
+                        borderBottom: "1px solid #eee",
+                      }}
+                    >
+                      <div style={{ marginBottom: "8px", fontWeight: "500", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={request.user.username}>
+                        {request.user.username}
+                      </div>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <button
+                          type="button"
+                          onClick={() => handleAcceptRequest(request.requestId)}
+                          style={{
+                            flex: 1,
+                            padding: "6px 12px",
+                            backgroundColor: "#4CAF50",
+                            color: "white",
+                            border: "none",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            fontSize: "12px",
+                          }}
+                        >
+                          Accept
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRejectRequest(request.requestId)}
+                          style={{
+                            flex: 1,
+                            padding: "6px 12px",
+                            backgroundColor: "#f44336",
+                            color: "white",
+                            border: "none",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            fontSize: "12px",
+                          }}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="nav-section">
+              <p className="nav-title">Friends</p>
+              <div className="nav-list">
+                {friends.length ? (
+                  friends.map((friend) => (
+                    <div key={friend.id} className="friend-item-wrapper">
+                      <button
+                        type="button"
+                        className="nav-item"
+                        onClick={() => startConversationWith(friend.username)}
+                        disabled={isOpeningChat}
+                        title={friend.username}
+                      >
+                        <span className="nav-avatar">
+                          {friend.username.charAt(0).toUpperCase()}
+                        </span>
+                        <span className="nav-label">
+                          {friend.username}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFriendMenuOpen(friendMenuOpen === friend.id ? null : friend.id);
+                        }}
+                        style={{
+                          position: "absolute",
+                          right: "8px",
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: "18px",
+                          padding: "4px 8px",
+                          color: "#666",
+                        }}
+                      >
+                        ⋮
+                      </button>
+                      {friendMenuOpen === friend.id && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            right: "8px",
+                            top: "100%",
+                            backgroundColor: "white",
+                            border: "1px solid #ddd",
+                            borderRadius: "4px",
+                            boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                            zIndex: 1000,
+                            minWidth: "120px",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`Remove ${friend.username} from friends?`)) {
+                                handleDeleteFriend(friend.id);
+                              }
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "8px 12px",
+                              border: "none",
+                              background: "transparent",
+                              textAlign: "left",
+                              cursor: "pointer",
+                              color: "#d32f2f",
+                            }}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = "#f5f5f5"}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = "transparent"}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <p className="nav-empty">No friends yet</p>
+                )}
+              </div>
+            </div>
+            {friendRequests.outgoing.length > 0 && (
+              <div className="nav-section" style={{ marginTop: "8px" }}>
+                <p className="nav-title" style={{ fontSize: "12px", color: "#666" }}>
+                  Pending ({friendRequests.outgoing.length})
+                </p>
+                <div className="nav-list">
+                  {friendRequests.outgoing.map((request) => (
+                    <div
+                      key={request.requestId}
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: "13px",
+                        color: "#999",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }} title={request.user.username}>{request.user.username}</span>
+                      <span style={{ fontSize: "11px", flexShrink: 0, marginLeft: "8px" }}>⏳ Pending</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </nav>
+          <form className="sidebar-start-chat" onSubmit={handleAddFriend}>
+            <label className="field ghost">
+              <span className="field-label">Add friend</span>
+              <input
+                name="addFriend"
+                placeholder="Username (case-sensitive)"
+                value={addFriendUsername}
+                onChange={(event) => setAddFriendUsername(event.target.value)}
+              />
+            </label>
+            <button
+              className="ghost-button"
+              type="submit"
+              disabled={isAddingFriend}
+            >
+              {isAddingFriend ? "Adding..." : "Add friend"}
+            </button>
+          </form>
+          <button className="sidebar-logout" type="button" onClick={logout}>
+            Log out
+          </button>
           <button
             type="button"
             className={`sidebar-icon ${isFriendDropdownOpen ? "active" : ""}`}
@@ -933,7 +1246,11 @@ export default function ChatPage() {
                 </p>
               ) : (
                 conversations.map((conversation) => {
-                  const preview = conversation.lastMessage?.content ?? "No messages yet.";
+                  // Show decrypted preview if available, otherwise encrypted preview
+                const lastMsg = conversation.lastMessage;
+                const preview = lastMsg
+                  ? (decryptedMessages[lastMsg.id] || lastMsg.content || "Encrypted message")
+                  : "No messages yet.";
                   return (
                     <button
                       key={conversation.id}
@@ -947,7 +1264,7 @@ export default function ChatPage() {
                         {conversation.name?.charAt(0).toUpperCase()}
                       </div>
                       <div className="conversation-copy">
-                        <span className="conversation-name">{conversation.name}</span>
+                        <span className="conversation-name" title={conversation.name}>{conversation.name}</span>
                         <span className="conversation-preview">{preview}</span>
                       </div>
                       <span className="conversation-chevron" aria-hidden>
@@ -962,23 +1279,34 @@ export default function ChatPage() {
 
           <section className="chat-panel">
             <header className="panel-header conversation">
-              <h1>{selectedConversation?.name || "Select a conversation"}</h1>
+              <h1
+              style={selectedConversation ? { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : {}}
+              title={selectedConversation?.name || ""}
+            >
+              {selectedConversation?.name || "Select a conversation"}
+            </h1>
             </header>
             <div className="message-list">
               {selectedConversation ? (
                 messages.length ? (
-                  messages.map((message) => (
-                    <article
-                      key={message.id}
-                      className={`message-bubble ${message.isOwn ? "own" : "their"}`}
-                    >
-                      <span className="bubble-meta">
-                        {message.isOwn ? "You" : message.sender.username}
-                      </span>
-                      <p className="bubble-text">{message.content}</p>
-                      <time className="bubble-time">{formatTime(message.sentAt)}</time>
-                    </article>
-                  ))
+                  messages.map((message) => {
+                  // All messages are now decryptable (including our own sent messages!)
+                  const displayContent = decryptedMessages[message.id] ||
+                    (privateKey ? "Decrypting..." : message.content);
+
+                  return (
+                      <article
+                        key={message.id}
+                        className={`message-bubble ${message.isOwn ? "own" : "their"}`}
+                      >
+                        <span className="bubble-meta" title={message.isOwn ? "You" : message.sender.username}>
+                          {message.isOwn ? "You" : message.sender.username}
+                        </span>
+                        <p className="bubble-text">{displayContent}</p>
+                        <time className="bubble-time">{formatTime(message.sentAt)}</time>
+                      </article>
+                    );
+                })
                 ) : (
                   <p className="placeholder">No messages yet. Say hello!</p>
                 )
@@ -988,13 +1316,21 @@ export default function ChatPage() {
               <span ref={messageEndRef} />
             </div>
             <form className="composer" onSubmit={handleSendMessage}>
-              <input
+              <textarea
                 className="composer-input"
-                placeholder="Your message"
+                placeholder="Type Your Message..."
                 value={messageDraft}
                 disabled={!selectedConversation}
                 onChange={(event) => setMessageDraft(event.target.value)}
-              />
+                maxLength={2000}
+              rows={1}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  handleSendMessage(event);
+                }
+              }}
+            />
               <button
                 className="composer-send"
                 type="submit"
@@ -1003,6 +1339,11 @@ export default function ChatPage() {
                 {isSending ? "…" : "➤"}
               </button>
             </form>
+          {selectedConversation && (
+            <p className="character-counter">
+              {messageDraft.length}/2000 characters
+            </p>
+          )}
           </section>
         </div>
       </div>

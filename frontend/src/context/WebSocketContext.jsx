@@ -32,14 +32,14 @@ export function WebSocketProvider({ children }) {
     });
 
     newSocket.on("connect", () => {
-      console.log("✓ Connected to WebSocket relay server");
+      console.log("[OK] Connected to WebSocket relay server");
       setIsConnected(true);
       // Authenticate with user ID
       newSocket.emit("authenticate", { userId: user.id });
     });
 
     newSocket.on("authenticated", (data) => {
-      console.log("✓ Authenticated as user", data.userId);
+      console.log("[OK] Authenticated as user", data.userId);
     });
 
     newSocket.on("disconnect", () => {
@@ -61,13 +61,13 @@ export function WebSocketProvider({ children }) {
 
     // Listen for friend request acceptances
     newSocket.on("friend_request_accepted_event", (data) => {
-      console.log("✓ Friend request accepted:", data.friend);
+      console.log("[OK] Friend request accepted:", data.friend);
       friendAcceptHandlersRef.current.forEach((handler) => handler(data.friend));
     });
 
     // Listen for friend deletions
     newSocket.on("friend_deleted_event", (data) => {
-      console.log("❌ Friend removed:", data.deleter);
+      console.log("[ERROR] Friend removed:", data.deleter);
       friendDeleteHandlersRef.current.forEach((handler) => handler(data.deleter));
     });
 

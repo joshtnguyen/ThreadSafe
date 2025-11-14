@@ -7,8 +7,9 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import and_, func, or_
 
 from ..database import db
-from ..models import Contact, Message, User
+from ..models import Contact, Message, User, PublicKey
 from ..websocket_helper import emit_new_message
+from ..encryption.message_crypto import encrypt_message_for_user
 
 conversations_bp = Blueprint("conversations", __name__)
 
@@ -148,7 +149,7 @@ def get_conversation(conversation_id: int):
     ).first()
 
     if not contact:
-        return jsonify({"message": "Not a contact."}), 404
+        return jsonify({"message": "Contact not found."}), 404
 
     # Get last message
     last_message = Message.query.filter(
@@ -175,20 +176,12 @@ def get_messages(conversation_id: int):
     """Return messages in a conversation (conversation_id is the other user's ID)."""
     current_user_id = _current_user_id()
 
-    # Verify the other user exists and is a contact
+    # Verify the other user exists
     contact_user = User.query.get(conversation_id)
     if not contact_user:
         return jsonify({"message": "User not found."}), 404
 
-    contact = Contact.query.filter_by(
-        userID=current_user_id,
-        contact_userID=conversation_id
-    ).first()
-
-    if not contact:
-        return jsonify({"message": "Not a contact."}), 404
-
-    # Get all messages between these two users
+    # Get all messages between these two users (regardless of contact status - chat history preserved)
     messages = Message.query.filter(
         or_(
             and_(Message.senderID == current_user_id, Message.receiverID == conversation_id),
@@ -196,15 +189,25 @@ def get_messages(conversation_id: int):
         )
     ).order_by(Message.timeStamp.asc()).all()
 
-    # Mark unread messages as delivered/read
-    unread = [
-        msg for msg in messages
-        if msg.senderID == conversation_id and msg.status == "Sent"
-    ]
-    if unread:
-        for msg in unread:
-            msg.status = "Read"
-        db.session.commit()
+    # If no messages exist, return empty list (not an error - they can view old chats)
+    if not messages:
+        return jsonify({"messages": []}), 200
+
+    # Mark unread messages as delivered/read only if they're still contacts
+    contact = Contact.query.filter_by(
+        userID=current_user_id,
+        contact_userID=conversation_id
+    ).first()
+
+    if contact:  # Only mark as read if still friends
+        unread = [
+            msg for msg in messages
+            if msg.senderID == conversation_id and msg.status == "Sent"
+        ]
+        if unread:
+            for msg in unread:
+                msg.status = "Read"
+            db.session.commit()
 
     return jsonify({"messages": [msg.to_dict(current_user_id) for msg in messages]}), 200
 
@@ -234,14 +237,42 @@ def create_message(conversation_id: int):
     if not content:
         return jsonify({"message": "Message content is required."}), 400
 
-    # For now, store plaintext content (encryption can be added later)
-    # Using placeholder values for encryption fields
+    # Fetch recipient's public key for encryption
+    recipient_public_key = PublicKey.query.filter_by(userID=conversation_id).first()
+    if not recipient_public_key:
+        return jsonify({"message": "Recipient's encryption key not found. They may need to re-register."}), 404
+
+    # Fetch sender's public key for double encryption (so they can read their own message)
+    sender_public_key = PublicKey.query.filter_by(userID=current_user_id).first()
+    if not sender_public_key:
+        return jsonify({"message": "Your encryption key not found. Please re-login."}), 404
+
+    # Encrypt the message twice: once for recipient, once for sender
+    try:
+        # Encrypt for recipient
+        recipient_encrypted = encrypt_message_for_user(content, recipient_public_key.publicKey)
+
+        # Encrypt for sender (so they can read their own message)
+        sender_encrypted = encrypt_message_for_user(content, sender_public_key.publicKey)
+    except Exception as e:
+        return jsonify({"message": f"Encryption failed: {str(e)}"}), 500
+
+    # Store both encrypted versions in database
     message = Message(
         senderID=current_user_id,
         receiverID=conversation_id,
-        encryptedContent=content,  # TODO: Encrypt this
-        iv="placeholder_iv",  # TODO: Generate real IV
-        hmac="placeholder_hmac",  # TODO: Generate real HMAC
+        # Recipient's encrypted copy
+        encryptedContent=recipient_encrypted['encrypted_content'],
+        iv=recipient_encrypted['iv'],
+        hmac=recipient_encrypted['auth_tag'],
+        encrypted_aes_key=recipient_encrypted['encrypted_aes_key'],
+        ephemeral_public_key=recipient_encrypted['ephemeral_public_key'],
+        # Sender's encrypted copy
+        sender_encrypted_content=sender_encrypted['encrypted_content'],
+        sender_iv=sender_encrypted['iv'],
+        sender_hmac=sender_encrypted['auth_tag'],
+        sender_encrypted_aes_key=sender_encrypted['encrypted_aes_key'],
+        sender_ephemeral_public_key=sender_encrypted['ephemeral_public_key'],
         status="Sent",
         msg_Type="text",
         expiryTime=Message.default_expiry_time(is_group=False),
@@ -251,7 +282,7 @@ def create_message(conversation_id: int):
     db.session.commit()
 
     # Emit real-time message to receiver via WebSocket
-    message_data = message.to_dict(conversation_id)
-    emit_new_message(conversation_id, message_data)
+    emit_new_message(conversation_id, message.to_dict(conversation_id))
 
+    # Return message to sender
     return jsonify({"message": message.to_dict(current_user_id)}), 201

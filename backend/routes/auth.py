@@ -6,7 +6,8 @@ from sqlalchemy import func
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from ..database import db
-from ..models import User
+from ..models import User, PublicKey
+from ..encryption.ecc_handler import generate_key_pair, serialize_public_key
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -26,6 +27,27 @@ def register():
     if not username or not password or not email:
         return jsonify({"message": "Username, email, and password are required."}), 400
 
+    # Validate password length
+    if len(password) < 8:
+        return jsonify({"message": "Password must be at least 8 characters long."}), 400
+    if len(password) > 15:
+        return jsonify({"message": "Password must not exceed 15 characters."}), 400
+
+    # Validate username format
+    import re
+    # Must be 3-15 characters, start with letter, allow letters/numbers/_-. after first char
+    username_pattern = r'^[a-zA-Z][a-zA-Z0-9._-]{2,14}$'
+
+    if not re.match(username_pattern, username):
+        if len(username) < 3:
+            return jsonify({"message": "Username must be at least 3 characters long."}), 400
+        elif len(username) > 15:
+            return jsonify({"message": "Username must not exceed 15 characters."}), 400
+        elif not username[0].isalpha():
+            return jsonify({"message": "Username must start with a letter, not a number or special character."}), 400
+        else:
+            return jsonify({"message": "Username can only contain letters, numbers, underscore (_), hyphen (-), and period (.)."}), 400
+
     # Email is case-insensitive, username is case-SENSITIVE
     normalised_email = email.lower()
 
@@ -44,6 +66,29 @@ def register():
     )
 
     db.session.add(user)
+    db.session.flush()  # Flush to get user.userID before commit
+
+    # Generate ECC key pair for end-to-end encryption
+    try:
+        private_key, public_key = generate_key_pair()
+        public_key_str = serialize_public_key(public_key)
+
+        # Store public key in database
+        user_public_key = PublicKey(
+            userID=user.userID,
+            publicKey=public_key_str,
+            algorithm="ECC-SECP256R1"
+        )
+        db.session.add(user_public_key)
+
+        # Note: Private key is NOT stored on server - it will be generated
+        # and stored on client-side in production. For now, we generate it
+        # here but don't store it (client will need to generate their own)
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": f"Failed to generate encryption keys: {str(e)}"}), 500
+
     db.session.commit()
 
     token = create_access_token(identity=str(user.userID))
@@ -53,6 +98,8 @@ def register():
             {
                 "accessToken": token,
                 "user": user.to_dict(),
+                "publicKey": public_key_str,  # Return public key to client
+                "message": "Account created. Note: In production, generate key pair on client-side."
             }
         ),
         201,

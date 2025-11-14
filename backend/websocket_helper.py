@@ -9,9 +9,9 @@ RELAY_SERVER_URL = 'http://localhost:5001'
 
 try:
     sio.connect(RELAY_SERVER_URL)
-    print(f'✓ Connected to TLS relay server at {RELAY_SERVER_URL}')
+    print(f'Connected to TLS relay server at {RELAY_SERVER_URL}')
 except Exception as e:
-    print(f'⚠ Could not connect to TLS relay server: {e}')
+    print(f'WARNING: Could not connect to TLS relay server: {e}')
     print('  Real-time features will not work. Start relay_server_TLS.py on port 5001.')
 
 

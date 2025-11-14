@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../context/AuthContext.jsx";
 import { api } from "../lib/api.js";
+import { generateKeyPair, exportPublicKey, exportPrivateKey } from "../lib/crypto.js";
+import { storePrivateKey, storePublicKey } from "../lib/keyStorage.js";
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -22,13 +24,73 @@ export default function RegisterPage() {
     setForm((previous) => ({ ...previous, [name]: value }));
   };
 
+  const validateUsername = (username) => {
+    // 3-15 characters, start with letter, allow letters/numbers/_-. after first char
+    const usernamePattern = /^[a-zA-Z][a-zA-Z0-9._-]{2,14}$/;
+
+    if (username.length < 3) {
+      return "Username must be at least 3 characters long.";
+    }
+    if (username.length > 15) {
+      return "Username must not exceed 15 characters.";
+    }
+    if (!/^[a-zA-Z]/.test(username)) {
+      return "Username must start with a letter, not a number or special character.";
+    }
+    if (!usernamePattern.test(username)) {
+      return "Username can only contain letters, numbers, underscore (_), hyphen (-), and period (.).";
+    }
+    return null; // Valid
+  };
+
+  const validatePassword = (password) => {
+    // 8-15 characters, all letters and special characters allowed
+    if (password.length < 8) {
+      return "Password must be at least 8 characters long.";
+    }
+    if (password.length > 15) {
+      return "Password must not exceed 15 characters.";
+    }
+    return null; // Valid
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
+
+    // Validate username on client side
+    const usernameError = validateUsername(form.username);
+    if (usernameError) {
+      setError(usernameError);
+      return;
+    }
+
+    // Validate password on client side
+    const passwordError = validatePassword(form.password);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
+      // Step 1: Generate ECC key pair client-side
+      const keyPair = await generateKeyPair();
+      const publicKeyPem = await exportPublicKey(keyPair.publicKey);
+      const privateKeyPem = await exportPrivateKey(keyPair.privateKey);
+
+      // Step 2: Register account (backend will generate its own keys initially)
       const response = await api.register(form);
+
+      // Step 3: Store private key locally with user ID (NEVER send to server!)
+      storePrivateKey(privateKeyPem, response.user.id);
+      storePublicKey(publicKeyPem, response.user.id);
+
+      // Step 4: Update backend with our client-generated public key
+      await api.rotatePublicKey(response.accessToken, publicKeyPem);
+
+      // Step 5: Login
       login(response.user, response.accessToken);
       navigate("/app");
     } catch (err) {
@@ -42,11 +104,11 @@ export default function RegisterPage() {
     <main className="auth-shell">
       <section className="auth-card">
         <div className="auth-header">
-          <span className="auth-logo">Create account</span>
+          <span className="auth-logo">Create Account</span>
         </div>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label className="field">
-            <span className="field-label">Account User's Name</span>
+            <span className="field-label">Full Name</span>
             <input
               name="displayName"
               value={form.displayName}

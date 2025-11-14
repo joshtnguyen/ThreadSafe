@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
-from sqlalchemy import func
 
 from ..database import db
 from ..models import Contact, User
@@ -160,22 +159,20 @@ def search_user():
 @friends_bp.post("")
 @jwt_required()
 def add_friend():
-    """Send a friend request by username or email (creates pending request)."""
+    """Send a friend request by username (creates pending request)."""
     current_user_id = _safe_identity()
     payload = request.get_json(silent=True) or {}
     identifier = (payload.get("username") or "").strip()
 
     if not identifier:
-        return jsonify({"message": "Username or email is required."}), 400
+        return jsonify({"message": "Username is required."}), 400
 
     current_user = User.query.get(current_user_id)
     if not current_user:
         return jsonify({"message": "User not found."}), 404
 
-    # Try to find user by exact username (case-SENSITIVE), then by email (case-insensitive)
+    # Find user by exact username (case-SENSITIVE) only
     target_user = User.query.filter_by(username=identifier).first()
-    if not target_user:
-        target_user = User.query.filter(func.lower(User.email) == identifier.lower()).first()
 
     if not target_user:
         return jsonify({"message": "User not found."}), 404
@@ -216,7 +213,7 @@ def add_friend():
     # If we already sent a request
     if existing_sent:
         if existing_sent.contactStatus == "Accepted":
-            return jsonify({"message": "Already friends.", "status": "accepted"}), 200
+            return jsonify({"message": "User already exists in Friend's List", "status": "accepted"}), 200
         elif existing_sent.contactStatus == "Pending":
             return jsonify({"message": "Friend request already sent.", "status": "pending"}), 200
         elif existing_sent.contactStatus == "Blocked":
@@ -442,7 +439,7 @@ def delete_friend(friend_id: int):
     ).first()
 
     if not contact1 and not contact2:
-        return jsonify({"message": "Not friends."}), 404
+        return jsonify({"message": "Contact not found."}), 404
 
     if contact1:
         db.session.delete(contact1)

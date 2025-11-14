@@ -64,6 +64,13 @@ input {
   background: rgba(255, 255, 255, 0.25);
 }
 
+/* Truncated text with tooltip */
+.truncate-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .auth-shell {
   display: grid;
   place-items: center;
@@ -610,14 +617,33 @@ input {
   gap: 12px;
 }
 
+.friend-item-wrapper {
+  position: relative;
+  width: 100%;
+}
+
 .nav-item {
   background: var(--panel-soft);
   border-radius: 18px;
   padding: 10px 14px;
+  padding-right: 40px;
   display: flex;
   align-items: center;
   gap: 12px;
   color: inherit;
+  min-width: 0;
+  width: 100%;
+}
+
+.friend-item-wrapper .nav-item {
+  padding-right: 40px;
+}
+
+.friend-item-wrapper button[style*="position: absolute"] {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .nav-item .nav-avatar {
@@ -633,6 +659,12 @@ input {
 .nav-label {
   text-align: left;
   font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  max-width: 130px;
 }
 
 .nav-empty {
@@ -689,6 +721,7 @@ input {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-width: 0;
 }
 
 .panel-header h1 {
@@ -698,6 +731,7 @@ input {
 
 .panel-header.conversation h1 {
   font-size: 1.6rem;
+  max-width: 250px;
 }
 
 .conversation-items {
@@ -739,10 +773,15 @@ input {
   flex-direction: column;
   gap: 6px;
   flex: 1;
+  min-width: 0;
 }
 
 .conversation-name {
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
 }
 
 .conversation-preview {
@@ -799,6 +838,11 @@ input {
   font-size: 0.75rem;
   letter-spacing: 0.12em;
   color: rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+  display: block;
 }
 
 .message-bubble.own .bubble-meta {
@@ -836,6 +880,13 @@ input {
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.12);
   color: inherit;
+  min-height: 48px;
+  max-height: 200px;
+  resize: vertical;
+  overflow-y: auto;
+  font-family: inherit;
+  font-size: 1rem;
+  line-height: 1.45;
 }
 
 .composer-input:disabled {
@@ -848,6 +899,41 @@ input {
   background: black;
   color: white;
   font-size: 1.2rem;
+}
+
+.character-counter {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: right;
+  padding: 4px 12px 8px;
+  margin: 0;
+}
+
+.bottom-tab-bar {
+  background: var(--panel-dark);
+  border-radius: var(--card-radius);
+  padding: 16px 24px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  box-shadow: var(--shadow-soft);
+  flex-shrink: 0;
+}
+
+.tab-settings {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s ease;
+}
+
+.tab-settings:hover {
+  background: rgba(255, 255, 255, 0.05);
 }
 
 @media (max-width: 1200px) {
