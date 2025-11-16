@@ -47,8 +47,8 @@ docker-compose up
 
 2. Open three terminals  
    My recommendation: in vscode open a terminal (Command+j for mac) then press "Split Terminal" icon in the top right-ish of the terminal and to the left of the trash icon  
-   - Both terminals should be in the project root folder `/CMPE-131-Term-Project`  
-  Here are optional env export commands that you can run if you run into bugs; run them in any backend/relay terminal before starting the processes:
+   - Both terminals should be in the project root folder `/CMPE-131-Term-Project`
+Here are optional env export commands that you can run if you run into bugs; run them in any backend/relay terminal before starting the processes:
     ```bash
     # Unix/macOS (bash/zsh)
     export FRONTEND_ORIGIN=http://localhost:5173
@@ -60,8 +60,7 @@ docker-compose up
     $env:RELAY_API_URL="http://localhost:5001"
     $env:RELAY_API_TOKEN="dev-relay-token"
    ```
-
-3. Run these commands in one terminal (one at a time):
+4. Run these commands in one terminal (one at a time):
    ```bash
    python3 -m venv .venv    # (or try python -m venv .venv)  
    source .venv/bin/activate    # (windows: venv\Scripts\activate)  
