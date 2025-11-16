@@ -66,7 +66,7 @@ docker-compose up
 4. Run this command in the third terminal (one at a time):
    ```bash
    cd frontend  
-   npm install
+   npm install    # first time only
    npm run dev
    ```
 
