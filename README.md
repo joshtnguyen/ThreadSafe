@@ -47,8 +47,7 @@ docker-compose up
 
 2. Open three terminals  
    My recommendation: in vscode open a terminal (Command+j for mac) then press "Split Terminal" icon in the top right-ish of the terminal and to the left of the trash icon  
-   - Both terminals should be in the project root folder `/CMPE-131-Term-Project`
-
+   - Both terminals should be in the project root folder `/CMPE-131-Term-Project`  
   Here are optional env export commands that you can run if you run into bugs; run them in any backend/relay terminal before starting the processes:
     ```bash
     # Unix/macOS (bash/zsh)
