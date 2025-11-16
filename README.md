@@ -49,13 +49,25 @@ docker-compose up
    My recommendation: in vscode open a terminal (Command+j for mac) then press "Split Terminal" icon in the top right-ish of the terminal and to the left of the trash icon  
    - Both terminals should be in the project root folder `/CMPE-131-Term-Project`
 
-3. Run this command in one terminal:
+3. Run these commands in one terminal (one at a time):
    ```bash
-   python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && python run.py 
+   python3 -m venv .venv (or try python -m venv .venv)  
+   source .venv/bin/activate (windows: venv\Scripts\activate)  
+   pip install -r requirements.txt  
+   python run.py  
    ```
-4. Run this command in the other terminal:
+3. Run these commands in the second terminal (one at a time):
    ```bash
-   cd frontend && npm install && npm run dev
+   python3 -m venv .venv (or try python -m venv .venv)  
+   source .venv/bin/activate (windows: venv\Scripts\activate)  
+   pip install -r requirements.txt  
+   python relay_server_TLS.py  
+   ```
+4. Run this command in the third terminal (one at a time):
+   ```bash
+   cd frontend  
+   npm install
+   npm run dev
    ```
 
 5. Command+click on the `http://localhost:5173/` to open the app in your browser
