@@ -45,21 +45,34 @@ docker-compose up
    cd CMPE-131-Term-Project
    ```
 
-2. Open two terminals  
+2. Open three terminals  
    My recommendation: in vscode open a terminal (Command+j for mac) then press "Split Terminal" icon in the top right-ish of the terminal and to the left of the trash icon  
    - Both terminals should be in the project root folder `/CMPE-131-Term-Project`
 
+  Here are optional env export commands that you can run if you run into bugs; run them in any backend/relay terminal before starting the processes:
+    ```bash
+    # Unix/macOS (bash/zsh)
+    export FRONTEND_ORIGIN=http://localhost:5173
+    export RELAY_API_URL=http://localhost:5001
+    export RELAY_API_TOKEN=dev-relay-token
+    
+    # Windows (PowerShell)
+    $env:FRONTEND_ORIGIN="http://localhost:5173"
+    $env:RELAY_API_URL="http://localhost:5001"
+    $env:RELAY_API_TOKEN="dev-relay-token"
+   ```
+
 3. Run these commands in one terminal (one at a time):
    ```bash
-   python3 -m venv .venv (or try python -m venv .venv)  
-   source .venv/bin/activate (windows: venv\Scripts\activate)  
+   python3 -m venv .venv    # (or try python -m venv .venv)  
+   source .venv/bin/activate    # (windows: venv\Scripts\activate)  
    pip install -r requirements.txt  
    python run.py  
    ```
 3. Run these commands in the second terminal (one at a time):
    ```bash
-   python3 -m venv .venv (or try python -m venv .venv)  
-   source .venv/bin/activate (windows: venv\Scripts\activate)  
+   python3 -m venv .venv    # (or try python -m venv .venv)  
+   source .venv/bin/activate    # (windows: venv\Scripts\activate)  
    pip install -r requirements.txt  
    python relay_server_TLS.py  
    ```
