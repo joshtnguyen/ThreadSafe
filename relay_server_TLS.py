@@ -164,6 +164,7 @@ def relay_friend_accepted_http():
     friend_data = data.get('friend')
     if not requester_id or not friend_data:
         return jsonify({'message': 'requesterId and friend required'}), 400
+    print(f'Emitting friend_request_accepted_event to user_{requester_id} with friend: {friend_data.get("username", "unknown")}')
     socketio.emit('friend_request_accepted_event', {'friend': friend_data}, room=f'user_{requester_id}')
     return jsonify({'status': 'ok'}), 200
 
@@ -177,6 +178,19 @@ def relay_friend_deleted_http():
     if not friend_id or not deleter:
         return jsonify({'message': 'friendId and deleter required'}), 400
     socketio.emit('friend_deleted_event', {'deleter': deleter}, room=f'user_{friend_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/friend-rejected')
+def relay_friend_rejected_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    requester_id = data.get('requesterId')
+    rejector_data = data.get('rejector')
+    if not requester_id or not rejector_data:
+        return jsonify({'message': 'requesterId and rejector required'}), 400
+    print(f'Emitting friend_request_rejected_event to user_{requester_id} from: {rejector_data.get("username", "unknown")}')
+    socketio.emit('friend_request_rejected_event', {'rejector': rejector_data}, room=f'user_{requester_id}')
     return jsonify({'status': 'ok'}), 200
 
 

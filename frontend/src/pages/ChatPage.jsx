@@ -38,7 +38,7 @@ const TruncatedUsername = ({ username, className = "" }) => (
 
 export default function ChatPage() {
   const { user, token, logout } = useAuth();
-  const { onMessageReceived, onFriendRequest, onFriendRequestAccepted, onFriendDeleted } = useWebSocket();
+  const { onMessageReceived, onFriendRequest, onFriendRequestAccepted, onFriendDeleted, onFriendRequestRejected } = useWebSocket();
 
   const [conversations, setConversations] = useState([]);
   const [friends, setFriends] = useState([]);
@@ -315,16 +315,35 @@ export default function ChatPage() {
   // Listen for friend request acceptance
   useEffect(() => {
     const unsubscribe = onFriendRequestAccepted((friendData) => {
-      // Move from outgoing requests to friends list
-      setFriendRequests((prev) => ({
-        ...prev,
-        outgoing: prev.outgoing.filter((req) => req.user.id !== friendData.id),
-      }));
+      console.log("Friend request accepted event received:", friendData);
+
+      // Remove from outgoing requests
+      setFriendRequests((prev) => {
+        const newOutgoing = prev.outgoing.filter((req) => req.user.id !== friendData.id);
+        console.log(`Removing from outgoing: ${prev.outgoing.length} -> ${newOutgoing.length}`);
+        return {
+          ...prev,
+          outgoing: newOutgoing,
+        };
+      });
+
+      // Add to friends list
       setFriends((prev) => {
         const exists = prev.some((f) => f.id === friendData.id);
-        if (exists) return prev;
+        if (exists) {
+          console.log(`Friend ${friendData.username} already in friends list`);
+          return prev;
+        }
+        console.log(`Adding ${friendData.username} to friends list`);
         return [...prev, friendData].sort((a, b) => a.username.localeCompare(b.username));
       });
+
+      // Update search results if showing this user
+      setFriendSearchResult((prev) => {
+        if (!prev || prev.user.id !== friendData.id) return prev;
+        return { ...prev, relationshipStatus: "friends" };
+      });
+
       setToast({ message: `${friendData.username} accepted your friend request!`, tone: "success" });
     });
     return unsubscribe;
@@ -343,6 +362,32 @@ export default function ChatPage() {
     });
     return unsubscribe;
   }, [onFriendDeleted]);
+
+  // Listen for friend request rejections
+  useEffect(() => {
+    const unsubscribe = onFriendRequestRejected((rejectorData) => {
+      console.log("Friend request rejection event received:", rejectorData);
+
+      // Remove from outgoing requests
+      setFriendRequests((prev) => {
+        const newOutgoing = prev.outgoing.filter((req) => req.user.id !== rejectorData.id);
+        console.log(`Removing from outgoing after rejection: ${prev.outgoing.length} -> ${newOutgoing.length}`);
+        return {
+          ...prev,
+          outgoing: newOutgoing,
+        };
+      });
+
+      // Update search results if showing this user
+      setFriendSearchResult((prev) => {
+        if (!prev || prev.user.id !== rejectorData.id) return prev;
+        return { ...prev, relationshipStatus: "none" };
+      });
+
+      setToast({ message: `${rejectorData.username} declined your friend request.`, tone: "info" });
+    });
+    return unsubscribe;
+  }, [onFriendRequestRejected]);
 
   const handleSendMessage = async (event) => {
     event.preventDefault();

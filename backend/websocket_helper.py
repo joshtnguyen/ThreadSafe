@@ -41,3 +41,8 @@ def emit_friend_request_accepted(requester_id: int, friend_data: dict):
 def emit_friend_deleted(friend_id: int, deleter_data: dict):
     """Emit a friend deletion notification."""
     _post("/relay/friend-deleted", {"friendId": friend_id, "deleter": deleter_data})
+
+
+def emit_friend_request_rejected(requester_id: int, rejector_data: dict):
+    """Emit a friend request rejection notification."""
+    _post("/relay/friend-rejected", {"requesterId": requester_id, "rejector": rejector_data})

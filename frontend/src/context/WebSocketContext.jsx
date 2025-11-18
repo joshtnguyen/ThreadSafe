@@ -14,6 +14,7 @@ export function WebSocketProvider({ children }) {
   const friendRequestHandlersRef = useRef([]);
   const friendAcceptHandlersRef = useRef([]);
   const friendDeleteHandlersRef = useRef([]);
+  const friendRejectHandlersRef = useRef([]);
 
   useEffect(() => {
     // Only connect if user is logged in
@@ -61,14 +62,32 @@ export function WebSocketProvider({ children }) {
 
     // Listen for friend request acceptances
     newSocket.on("friend_request_accepted_event", (data) => {
-      console.log("[OK] Friend request accepted:", data.friend);
-      friendAcceptHandlersRef.current.forEach((handler) => handler(data.friend));
+      console.log("Friend request accepted event received:", data);
+      if (data && data.friend) {
+        console.log(`   Friend data:`, data.friend);
+        friendAcceptHandlersRef.current.forEach((handler) => handler(data.friend));
+        console.log(`   Notified ${friendAcceptHandlersRef.current.length} handler(s)`);
+      } else {
+        console.warn("WARNING: Friend request accepted event received but no friend data:", data);
+      }
     });
 
     // Listen for friend deletions
     newSocket.on("friend_deleted_event", (data) => {
       console.log("[ERROR] Friend removed:", data.deleter);
       friendDeleteHandlersRef.current.forEach((handler) => handler(data.deleter));
+    });
+
+    // Listen for friend request rejections
+    newSocket.on("friend_request_rejected_event", (data) => {
+      console.log("Friend request rejected event received:", data);
+      if (data && data.rejector) {
+        console.log(`   Rejector data:`, data.rejector);
+        friendRejectHandlersRef.current.forEach((handler) => handler(data.rejector));
+        console.log(`   Notified ${friendRejectHandlersRef.current.length} handler(s)`);
+      } else {
+        console.warn("WARNING: Friend request rejected event received but no rejector data:", data);
+      }
     });
 
     setSocket(newSocket);
@@ -110,6 +129,14 @@ export function WebSocketProvider({ children }) {
     };
   };
 
+  // Register friend request rejection handler
+  const onFriendRequestRejected = (handler) => {
+    friendRejectHandlersRef.current = [...friendRejectHandlersRef.current, handler];
+    return () => {
+      friendRejectHandlersRef.current = friendRejectHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
   const value = {
     socket,
     isConnected,
@@ -117,6 +144,7 @@ export function WebSocketProvider({ children }) {
     onFriendRequest,
     onFriendRequestAccepted,
     onFriendDeleted,
+    onFriendRequestRejected,
   };
 
   return (

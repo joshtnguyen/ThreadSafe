@@ -5,7 +5,7 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from ..database import db
 from ..models import Contact, User
-from ..websocket_helper import emit_friend_request, emit_friend_request_accepted, emit_friend_deleted
+from ..websocket_helper import emit_friend_request, emit_friend_request_accepted, emit_friend_deleted, emit_friend_request_rejected
 
 friends_bp = Blueprint("friends", __name__)
 
@@ -380,7 +380,8 @@ def accept_friend_request(requester_id: int):
     requester = User.query.get(requester_id)
     current_user = User.query.get(current_user_id)
 
-    # Emit real-time notification to requester
+    # Emit real-time notification to requester (the person who sent the original request)
+    # Send the acceptor's data so the requester knows who accepted
     if current_user:
         emit_friend_request_accepted(requester_id, current_user.to_dict())
 
@@ -411,6 +412,11 @@ def reject_friend_request(requester_id: int):
 
     db.session.delete(request_record)
     db.session.commit()
+
+    # Emit real-time notification to requester (the person who sent the original request)
+    current_user = User.query.get(current_user_id)
+    if current_user:
+        emit_friend_request_rejected(requester_id, current_user.to_dict())
 
     return jsonify({"message": "Friend request rejected."}), 200
 
