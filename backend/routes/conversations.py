@@ -248,6 +248,9 @@ def create_message(conversation_id: int):
     if not content:
         return jsonify({"message": "Message content is required."}), 400
 
+    if len(content) > 2000:
+        return jsonify({"message": "Message must not exceed 2000 characters."}), 400
+
     # Fetch recipient's public key for encryption
     recipient_public_key = PublicKey.query.filter_by(userID=conversation_id).first()
     if not recipient_public_key:
