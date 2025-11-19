@@ -126,7 +126,21 @@ def login():
 
     token = create_access_token(identity=str(user.userID))
 
-    return jsonify({"accessToken": token, "user": user.to_dict()}), 200
+    # Get user's encrypted private key for key recovery
+    public_key = PublicKey.query.filter_by(userID=user.userID).first()
+
+    response_data = {
+        "accessToken": token,
+        "user": user.to_dict()
+    }
+
+    # Include encrypted private key if available (for key recovery on new device)
+    if public_key and public_key.encrypted_private_key:
+        response_data["encryptedPrivateKey"] = public_key.encrypted_private_key
+        response_data["salt"] = public_key.private_key_salt
+        response_data["iv"] = public_key.private_key_iv
+
+    return jsonify(response_data), 200
 
 
 @auth_bp.get("/me")

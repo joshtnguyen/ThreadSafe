@@ -853,6 +853,9 @@ input {
   margin: 0;
   line-height: 1.45;
   color: inherit;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .bubble-time {

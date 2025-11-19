@@ -66,17 +66,29 @@ export const api = {
     request(`/friends/requests/${requesterId}/reject`, { method: "DELETE", token }),
   deleteFriend: (token, friendId) =>
     request(`/friends/${friendId}`, { method: "DELETE", token }),
-  rotatePublicKey: (token, publicKey) =>
+  rotatePublicKey: (token, publicKey, encryptedPrivateKey = null, salt = null, iv = null) =>
     request("/keys/rotate", {
       method: "PUT",
       token,
-      body: { publicKey, algorithm: "ECC-SECP256R1" },
+      body: {
+        publicKey,
+        algorithm: "ECC-SECP256R1",
+        encryptedPrivateKey,
+        salt,
+        iv
+      },
     }),
-  registerPublicKey: (token, publicKey) =>
+  registerPublicKey: (token, publicKey, encryptedPrivateKey = null, salt = null, iv = null) =>
     request("/keys/register", {
       method: "POST",
       token,
-      body: { publicKey, algorithm: "ECC-SECP256R1" },
+      body: {
+        publicKey,
+        algorithm: "ECC-SECP256R1",
+        encryptedPrivateKey,
+        salt,
+        iv
+      },
     }),
   myPublicKey: (token) => request("/keys/my-key", { token }),
 };

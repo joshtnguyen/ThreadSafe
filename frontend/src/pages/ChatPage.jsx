@@ -153,6 +153,45 @@ export default function ChatPage() {
     };
   }, [token]);
 
+  // Decrypt last messages for all conversations (for previews)
+  useEffect(() => {
+    if (!privateKey || conversations.length === 0) {
+      return;
+    }
+
+    async function decryptConversationPreviews() {
+      const newDecryptions = {};
+
+      for (const conversation of conversations) {
+        const lastMsg = conversation.lastMessage;
+        if (!lastMsg) {
+          continue; // Skip if no message
+        }
+
+        // Check if message has encryption data
+        if (lastMsg.encrypted_aes_key && lastMsg.ephemeral_public_key) {
+          try {
+            const plaintext = await decryptMessageComplete(lastMsg, privateKey);
+            newDecryptions[lastMsg.id] = plaintext;
+          } catch (error) {
+            console.error(`Failed to decrypt preview for message ${lastMsg.id}:`, error);
+            newDecryptions[lastMsg.id] = "[Decryption failed]";
+          }
+        }
+      }
+
+      // Update all decrypted messages at once
+      if (Object.keys(newDecryptions).length > 0) {
+        setDecryptedMessages((prev) => ({
+          ...prev,
+          ...newDecryptions,
+        }));
+      }
+    }
+
+    decryptConversationPreviews();
+  }, [conversations, privateKey]);
+
   useEffect(() => {
     if (!selectedId) {
       setMessages([]);
@@ -656,20 +695,23 @@ export default function ChatPage() {
     try {
       const response = await api.unblockUser(token, target);
       const unblockedUser = response.user;
+      const wasFriend = response.wasFriend;
       // Remove from blocked list
       setBlockedUsers((prev) => prev.filter((entry) => entry.username !== target));
-      // Add back to friends list
-      setFriends((prev) => {
-        const exists = prev.some((entry) => entry.id === unblockedUser.id);
-        if (exists) return prev;
-        return [...prev, unblockedUser].sort((a, b) => a.username.localeCompare(b.username));
-      });
-      // Update search result to show as friends
+      // Only add back to friends list if they were friends before blocking
+      if (wasFriend) {
+        setFriends((prev) => {
+          const exists = prev.some((entry) => entry.id === unblockedUser.id);
+          if (exists) return prev;
+          return [...prev, unblockedUser].sort((a, b) => a.username.localeCompare(b.username));
+        });
+      }
+      // Update search result based on whether they were friends
       setFriendSearchResult((previous) => {
         if (!previous || previous.user.username !== target) {
           return previous;
         }
-        return { ...previous, relationshipStatus: "friends", user: unblockedUser };
+        return { ...previous, relationshipStatus: wasFriend ? "friends" : "none", user: unblockedUser };
       });
       setToast({ message: `Unblocked ${target}.`, tone: "success" });
     } catch (error) {

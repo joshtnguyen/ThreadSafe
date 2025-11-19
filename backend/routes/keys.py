@@ -23,13 +23,16 @@ def _safe_identity() -> int:
 @jwt_required()
 def register_public_key():
     """
-    Store user's ECC public key in the database.
+    Store user's ECC public key and encrypted private key backup in the database.
     Called during account creation or key rotation.
 
     Request body:
     {
         "publicKey": "base64-encoded public key",
-        "algorithm": "ECC-SECP256R1"
+        "algorithm": "ECC-SECP256R1",
+        "encryptedPrivateKey": "base64-encoded encrypted private key",
+        "salt": "hex-encoded salt for PBKDF2",
+        "iv": "hex-encoded IV for AES"
     }
 
     Returns:
@@ -42,6 +45,9 @@ def register_public_key():
 
     public_key_str = payload.get("publicKey", "").strip()
     algorithm = payload.get("algorithm", "ECC-SECP256R1").strip()
+    encrypted_private_key = payload.get("encryptedPrivateKey", "").strip()
+    salt = payload.get("salt", "").strip()
+    iv = payload.get("iv", "").strip()
 
     if not public_key_str:
         return jsonify({"message": "Public key is required."}), 400
@@ -51,11 +57,14 @@ def register_public_key():
     if existing_key:
         return jsonify({"message": "Public key already registered. Use key rotation endpoint to update."}), 409
 
-    # Store the public key
+    # Store the public key and encrypted private key backup
     new_key = PublicKey(
         userID=current_user_id,
         publicKey=public_key_str,
-        algorithm=algorithm
+        algorithm=algorithm,
+        encrypted_private_key=encrypted_private_key if encrypted_private_key else None,
+        private_key_salt=salt if salt else None,
+        private_key_iv=iv if iv else None
     )
 
     db.session.add(new_key)
@@ -65,6 +74,33 @@ def register_public_key():
         "message": "Public key registered successfully.",
         "key": new_key.to_dict()
     }), 201
+
+
+@keys_bp.get("/encrypted-private")
+@jwt_required()
+def get_encrypted_private_key():
+    """
+    Retrieve the current user's encrypted private key backup.
+    Used during login to restore private key on new device/browser.
+
+    Returns:
+        200: Encrypted private key data
+        404: Key not found or no backup exists
+    """
+    current_user_id = _safe_identity()
+
+    public_key = PublicKey.query.filter_by(userID=current_user_id).first()
+    if not public_key:
+        return jsonify({"message": "No public key found for this user."}), 404
+
+    if not public_key.encrypted_private_key:
+        return jsonify({"message": "No encrypted private key backup found."}), 404
+
+    return jsonify({
+        "encryptedPrivateKey": public_key.encrypted_private_key,
+        "salt": public_key.private_key_salt,
+        "iv": public_key.private_key_iv
+    }), 200
 
 
 @keys_bp.get("/public/<int:user_id>")
@@ -148,13 +184,15 @@ def delete_my_public_key():
 @jwt_required()
 def rotate_public_key():
     """
-    Rotate (update) the user's public key.
-    Deletes old key and stores new one.
+    Rotate (update) the user's public key and optionally update encrypted private key backup.
 
     Request body:
     {
         "publicKey": "base64-encoded new public key",
-        "algorithm": "ECC-SECP256R1"
+        "algorithm": "ECC-SECP256R1",
+        "encryptedPrivateKey": "base64-encoded encrypted private key" (optional),
+        "salt": "hex-encoded salt for PBKDF2" (optional),
+        "iv": "hex-encoded IV for AES" (optional)
     }
 
     Returns:
@@ -167,6 +205,9 @@ def rotate_public_key():
 
     new_public_key_str = payload.get("publicKey", "").strip()
     algorithm = payload.get("algorithm", "ECC-SECP256R1").strip()
+    encrypted_private_key = payload.get("encryptedPrivateKey", "").strip()
+    salt = payload.get("salt", "").strip()
+    iv = payload.get("iv", "").strip()
 
     if not new_public_key_str:
         return jsonify({"message": "New public key is required."}), 400
@@ -179,6 +220,12 @@ def rotate_public_key():
     # Update the key
     existing_key.publicKey = new_public_key_str
     existing_key.algorithm = algorithm
+
+    # Update encrypted private key backup if provided
+    if encrypted_private_key:
+        existing_key.encrypted_private_key = encrypted_private_key
+        existing_key.private_key_salt = salt if salt else None
+        existing_key.private_key_iv = iv if iv else None
 
     db.session.commit()
 

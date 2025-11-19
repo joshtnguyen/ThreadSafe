@@ -254,3 +254,121 @@ function base64ToArrayBuffer(base64) {
   }
   return bytes.buffer;
 }
+
+// ============================================================================
+// Password-derived key functions for key backup/recovery
+// ============================================================================
+
+/**
+ * Derive an AES-256 key from password using PBKDF2
+ * @param {string} password User's password
+ * @param {Uint8Array} salt Random salt (16 bytes recommended)
+ * @returns {Promise<CryptoKey>} Derived AES key for encrypting private key
+ */
+export async function deriveKeyFromPassword(password, salt) {
+  // Import password as raw key material
+  const passwordKey = await window.crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  // Derive AES-256 key using PBKDF2
+  return await window.crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: 100000, // High iteration count for security
+      hash: 'SHA-256',
+    },
+    passwordKey,
+    {
+      name: 'AES-GCM',
+      length: 256,
+    },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * Encrypt private key with password-derived key for backup
+ * @param {string} privateKeyPem Base64-encoded PEM private key
+ * @param {string} password User's password
+ * @returns {Promise<{encryptedPrivateKey: string, salt: string, iv: string}>}
+ */
+export async function encryptPrivateKeyWithPassword(privateKeyPem, password) {
+  // Generate random salt and IV
+  const salt = window.crypto.getRandomValues(new Uint8Array(16));
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+
+  // Derive key from password
+  const derivedKey = await deriveKeyFromPassword(password, salt);
+
+  // Encrypt private key
+  const encrypted = await window.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv: iv,
+    },
+    derivedKey,
+    new TextEncoder().encode(privateKeyPem)
+  );
+
+  return {
+    encryptedPrivateKey: arrayBufferToBase64(encrypted),
+    salt: arrayBufferToHex(salt),
+    iv: arrayBufferToHex(iv),
+  };
+}
+
+/**
+ * Decrypt private key with password-derived key for recovery
+ * @param {string} encryptedPrivateKey Base64-encoded encrypted private key
+ * @param {string} saltHex Hex-encoded salt
+ * @param {string} ivHex Hex-encoded IV
+ * @param {string} password User's password
+ * @returns {Promise<string>} Decrypted base64-encoded PEM private key
+ */
+export async function decryptPrivateKeyWithPassword(encryptedPrivateKey, saltHex, ivHex, password) {
+  // Convert hex to Uint8Array
+  const salt = hexToArrayBuffer(saltHex);
+  const iv = hexToArrayBuffer(ivHex);
+
+  // Derive key from password
+  const derivedKey = await deriveKeyFromPassword(password, new Uint8Array(salt));
+
+  // Decrypt private key
+  const decrypted = await window.crypto.subtle.decrypt(
+    {
+      name: 'AES-GCM',
+      iv: new Uint8Array(iv),
+    },
+    derivedKey,
+    base64ToArrayBuffer(encryptedPrivateKey)
+  );
+
+  return new TextDecoder().decode(decrypted);
+}
+
+/**
+ * Convert ArrayBuffer to hex string
+ */
+function arrayBufferToHex(buffer) {
+  return Array.from(new Uint8Array(buffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * Convert hex string to ArrayBuffer
+ */
+function hexToArrayBuffer(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+  }
+  return bytes.buffer;
+}

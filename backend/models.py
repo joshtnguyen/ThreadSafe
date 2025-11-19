@@ -106,6 +106,11 @@ class PublicKey(db.Model):
     algorithm = db.Column(db.String(50), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # Encrypted private key backup (encrypted with password-derived key)
+    encrypted_private_key = db.Column(db.Text, nullable=True)
+    private_key_salt = db.Column(db.String(64), nullable=True)  # Hex-encoded salt for PBKDF2
+    private_key_iv = db.Column(db.String(64), nullable=True)  # Hex-encoded IV for AES
+
     # Relationships
     user = db.relationship("User", back_populates="public_keys")
 

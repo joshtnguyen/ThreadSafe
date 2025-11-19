@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../context/AuthContext.jsx";
 import { api } from "../lib/api.js";
-import { generateKeyPair, exportPublicKey, exportPrivateKey } from "../lib/crypto.js";
+import { generateKeyPair, exportPublicKey, exportPrivateKey, encryptPrivateKeyWithPassword } from "../lib/crypto.js";
 import { storePrivateKey, storePublicKey } from "../lib/keyStorage.js";
 
 export default function RegisterPage() {
@@ -80,17 +80,29 @@ export default function RegisterPage() {
       const publicKeyPem = await exportPublicKey(keyPair.publicKey);
       const privateKeyPem = await exportPrivateKey(keyPair.privateKey);
 
-      // Step 2: Register account (backend will generate its own keys initially)
+      // Step 2: Encrypt private key with password for backup/recovery
+      const { encryptedPrivateKey, salt, iv } = await encryptPrivateKeyWithPassword(
+        privateKeyPem,
+        form.password
+      );
+
+      // Step 3: Register account (backend will generate its own keys initially)
       const response = await api.register(form);
 
-      // Step 3: Store private key locally with user ID (NEVER send to server!)
+      // Step 4: Store private key locally with user ID
       storePrivateKey(privateKeyPem, response.user.id);
       storePublicKey(publicKeyPem, response.user.id);
 
-      // Step 4: Update backend with our client-generated public key
-      await api.rotatePublicKey(response.accessToken, publicKeyPem);
+      // Step 5: Update backend with our client-generated public key and encrypted private key backup
+      await api.rotatePublicKey(
+        response.accessToken,
+        publicKeyPem,
+        encryptedPrivateKey,
+        salt,
+        iv
+      );
 
-      // Step 5: Login
+      // Step 6: Login
       login(response.user, response.accessToken);
       navigate("/app");
     } catch (err) {

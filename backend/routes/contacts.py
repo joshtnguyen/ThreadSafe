@@ -317,13 +317,28 @@ def unblock_user():
     if not outgoing:
         return jsonify({"message": "User is not blocked."}), 404
 
-    # Set status back to Accepted instead of deleting
-    outgoing.contactStatus = "Accepted"
+    # Check if the other user has an accepted contact (meaning they were friends before blocking)
+    incoming = Contact.query.filter_by(
+        userID=target_user.userID,
+        contact_userID=current_user_id,
+        contactStatus="Accepted"
+    ).first()
+
+    was_friend = incoming is not None
+
+    if was_friend:
+        # Restore friendship - set status back to Accepted
+        outgoing.contactStatus = "Accepted"
+    else:
+        # They weren't friends before - just delete the block
+        db.session.delete(outgoing)
+
     db.session.commit()
 
     return jsonify({
         "message": f"Unblocked {target_user.username}.",
         "user": target_user.to_dict(),
+        "wasFriend": was_friend,
     }), 200
 
 
