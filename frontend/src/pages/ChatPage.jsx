@@ -471,7 +471,18 @@ export default function ChatPage() {
             return [...previous, friend].sort((a, b) => a.username.localeCompare(b.username));
           });
         }
+        // Update search result to show as friends (handles "already friends" case)
+        setFriendSearchResult((previous) => {
+          if (!previous || previous.user.username !== target) {
+            return previous;
+          }
+          return {
+            ...previous,
+            relationshipStatus: "friends",
+          };
+        });
         setToast({ message: ` ${response.message || "Now friends!"}`, tone: "success" });
+        return; // Early return since we've already updated the search result
       } else if (status === "pending") {
         // Request sent - add to outgoing requests
         if (friend) {
@@ -480,17 +491,18 @@ export default function ChatPage() {
             outgoing: [...prev.outgoing, { requestId: friend.id, user: friend }],
           }));
         }
+        // Update search result to show pending outgoing
+        setFriendSearchResult((previous) => {
+          if (!previous || previous.user.username !== target) {
+            return previous;
+          }
+          return {
+            ...previous,
+            relationshipStatus: "pending_outgoing",
+          };
+        });
         setToast({ message: ` ${response.message || "Friend request sent."}`, tone: "success" });
       }
-      setFriendSearchResult((previous) => {
-        if (!previous || previous.user.username !== target) {
-          return previous;
-        }
-        return {
-          ...previous,
-          relationshipStatus: status === "accepted" ? "friends" : "pending_outgoing",
-        };
-      });
     } catch (error) {
       setToast({ message: error.message, tone: "error" });
     } finally {
@@ -644,14 +656,22 @@ export default function ChatPage() {
     try {
       const response = await api.unblockUser(token, target);
       const unblockedUser = response.user;
+      // Remove from blocked list
       setBlockedUsers((prev) => prev.filter((entry) => entry.username !== target));
+      // Add back to friends list
+      setFriends((prev) => {
+        const exists = prev.some((entry) => entry.id === unblockedUser.id);
+        if (exists) return prev;
+        return [...prev, unblockedUser].sort((a, b) => a.username.localeCompare(b.username));
+      });
+      // Update search result to show as friends
       setFriendSearchResult((previous) => {
         if (!previous || previous.user.username !== target) {
           return previous;
         }
-        return { ...previous, relationshipStatus: "none", user: unblockedUser };
+        return { ...previous, relationshipStatus: "friends", user: unblockedUser };
       });
-      setToast({ message: `✓ Unblocked ${target}.`, tone: "success" });
+      setToast({ message: `Unblocked ${target}.`, tone: "success" });
     } catch (error) {
       setToast({ message: error.message, tone: "error" });
     } finally {
@@ -674,6 +694,7 @@ export default function ChatPage() {
     pending_outgoing: "Request sent",
     pending_incoming: "Sent you a request",
     blocked: "Blocked",
+    blocked_by: "This user has blocked you",
     none: "Not connected",
     self: "This is you",
   };
@@ -763,6 +784,12 @@ export default function ChatPage() {
             {unblockingUsername === username ? "Unblocking..." : "Unblock"}
           </button>
         </>
+      );
+    }
+
+    if (status === "blocked_by") {
+      return (
+        <span className="search-card-pill muted">Blocked by user</span>
       );
     }
 

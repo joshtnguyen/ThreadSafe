@@ -223,12 +223,23 @@ def create_message(conversation_id: int):
     if not receiver:
         return jsonify({"message": "User not found."}), 404
 
+    # Check if sender's contact to receiver is accepted
     contact = Contact.query.filter_by(
         userID=current_user_id,
         contact_userID=conversation_id
     ).first()
 
     if not contact or contact.contactStatus != "Accepted":
+        return jsonify({"message": "You must be friends to send messages."}), 403
+
+    # Check if receiver has blocked sender
+    receiver_contact = Contact.query.filter_by(
+        userID=conversation_id,
+        contact_userID=current_user_id,
+        contactStatus="Blocked"
+    ).first()
+
+    if receiver_contact:
         return jsonify({"message": "You must be friends to send messages."}), 403
 
     payload = request.get_json(silent=True) or {}

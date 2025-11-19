@@ -132,11 +132,12 @@ def search_user():
     status = "none"
     request_id = None
 
-    if (
-        (outgoing and outgoing.contactStatus == "Blocked") or
-        (incoming and incoming.contactStatus == "Blocked")
-    ):
+    # Check if current user blocked target
+    if outgoing and outgoing.contactStatus == "Blocked":
         status = "blocked"
+    # Check if target blocked current user
+    elif incoming and incoming.contactStatus == "Blocked":
+        status = "blocked_by"
     elif (
         (outgoing and outgoing.contactStatus == "Accepted") or
         (incoming and incoming.contactStatus == "Accepted")
@@ -188,6 +189,15 @@ def add_friend():
         userID=target_user.userID, contact_userID=current_user.userID
     ).first()
 
+    # Check if already friends (either direction)
+    if (existing_sent and existing_sent.contactStatus == "Accepted") or \
+       (existing_received and existing_received.contactStatus == "Accepted"):
+        return jsonify({"message": "User already exists in Friend's List", "status": "accepted"}), 200
+
+    # Check if target has blocked current user
+    if existing_received and existing_received.contactStatus == "Blocked":
+        return jsonify({"message": "Cannot send friend request to this user."}), 403
+
     # If they sent us a request, accept it automatically (mutual interest)
     if existing_received and existing_received.contactStatus == "Pending":
         # Accept their request
@@ -212,9 +222,7 @@ def add_friend():
 
     # If we already sent a request
     if existing_sent:
-        if existing_sent.contactStatus == "Accepted":
-            return jsonify({"message": "User already exists in Friend's List", "status": "accepted"}), 200
-        elif existing_sent.contactStatus == "Pending":
+        if existing_sent.contactStatus == "Pending":
             return jsonify({"message": "Friend request already sent.", "status": "pending"}), 200
         elif existing_sent.contactStatus == "Blocked":
             return jsonify({"message": "Cannot send request."}), 403
@@ -260,6 +268,8 @@ def block_user():
     if target_user.userID == current_user_id:
         return jsonify({"message": "You cannot block yourself."}), 400
 
+    # Only set the blocker's side to "Blocked"
+    # The blocked user's contact remains unchanged so they still see the blocker in their friend list
     outgoing = Contact.query.filter_by(
         userID=current_user_id,
         contact_userID=target_user.userID
@@ -271,18 +281,6 @@ def block_user():
         )
         db.session.add(outgoing)
     outgoing.contactStatus = "Blocked"
-
-    incoming = Contact.query.filter_by(
-        userID=target_user.userID,
-        contact_userID=current_user_id
-    ).first()
-    if not incoming:
-        incoming = Contact(
-            userID=target_user.userID,
-            contact_userID=current_user_id,
-        )
-        db.session.add(incoming)
-    incoming.contactStatus = "Blocked"
 
     db.session.commit()
 
@@ -309,26 +307,18 @@ def unblock_user():
     if target_user.userID == current_user_id:
         return jsonify({"message": "You cannot unblock yourself."}), 400
 
+    # Find the blocker's contact
     outgoing = Contact.query.filter_by(
         userID=current_user_id,
         contact_userID=target_user.userID,
         contactStatus="Blocked"
     ).first()
 
-    incoming = Contact.query.filter_by(
-        userID=target_user.userID,
-        contact_userID=current_user_id,
-        contactStatus="Blocked"
-    ).first()
-
-    if not outgoing and not incoming:
+    if not outgoing:
         return jsonify({"message": "User is not blocked."}), 404
 
-    if outgoing:
-        db.session.delete(outgoing)
-    if incoming:
-        db.session.delete(incoming)
-
+    # Set status back to Accepted instead of deleting
+    outgoing.contactStatus = "Accepted"
     db.session.commit()
 
     return jsonify({
