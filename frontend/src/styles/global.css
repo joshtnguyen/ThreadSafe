@@ -19,6 +19,16 @@
   --input-bg: #2f2f2f;
   --input-color: #f4f4f4;
   --button-primary-text: #1f1f1f;
+  --bubble-bg: rgba(255, 255, 255, 0.08);
+  --bubble-border: rgba(255, 255, 255, 0.08);
+  --bubble-text: #f4f4f4;
+  --bubble-meta: rgba(255, 255, 255, 0.65);
+  --bubble-time: rgba(255, 255, 255, 0.65);
+  --bubble-own-bg: rgba(220, 220, 220, 0.92);
+  --bubble-own-border: rgba(0, 0, 0, 0.08);
+  --bubble-own-text: #202020;
+  --bubble-meta-own: rgba(0, 0, 0, 0.55);
+  --bubble-time-own: rgba(0, 0, 0, 0.6);
 }
 
 :root[data-theme="light"] {
@@ -37,6 +47,16 @@
   --input-bg: #ffffff;
   --input-color: #1f1f1f;
   --button-primary-text: #ffffff;
+  --bubble-bg: #ffffff;
+  --bubble-border: rgba(0, 0, 0, 0.06);
+  --bubble-text: #1f1f1f;
+  --bubble-meta: rgba(0, 0, 0, 0.45);
+  --bubble-time: rgba(0, 0, 0, 0.38);
+  --bubble-own-bg: #111827;
+  --bubble-own-border: rgba(0, 0, 0, 0.12);
+  --bubble-own-text: #f7f9fb;
+  --bubble-meta-own: rgba(255, 255, 255, 0.78);
+  --bubble-time-own: rgba(255, 255, 255, 0.72);
 }
 
 * {
@@ -942,24 +962,27 @@ input {
 
 .message-bubble {
   max-width: 62%;
-  padding: 6px;
-  padding-left: 10px;
+  padding: 8px 10px;
   border-radius: 15px;
   display: inline-flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bubble-bg);
+  color: var(--bubble-text);
+  border: 1px solid var(--bubble-border);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.14);
 }
 
 .message-bubble.own {
   margin-left: auto;
-  background: rgba(220, 220, 220, 0.92);
-  color: #202020;
+  background: var(--bubble-own-bg);
+  color: var(--bubble-own-text);
+  border: 1px solid var(--bubble-own-border);
 }
 
 .bubble-meta {
   font-size: 0.75rem;
   letter-spacing: 0.12em;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--bubble-meta);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -968,7 +991,7 @@ input {
 }
 
 .message-bubble.own .bubble-meta {
-  color: rgba(0, 0, 0, 0.55);
+  color: var(--bubble-meta-own);
 }
 
 .bubble-text {
@@ -983,12 +1006,12 @@ input {
 .bubble-time {
   margin-right: 5px;
   font-size: 0.5rem;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--bubble-time);
   text-align: right;
 }
 
 .message-bubble.own .bubble-time {
-  color: rgba(0, 0, 0, 0.55);
+  color: var(--bubble-time-own);
 }
 
 .composer {
