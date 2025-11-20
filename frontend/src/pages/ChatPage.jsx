@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "../context/AuthContext.jsx";
+import { useTheme } from "../context/ThemeContext.jsx";
 import { useWebSocket } from "../context/WebSocketContext.jsx";
 import { api } from "../lib/api.js";
 import { decryptMessageComplete, importPrivateKey } from "../lib/crypto.js";
@@ -37,8 +38,17 @@ const TruncatedUsername = ({ username, className = "" }) => (
 );
 
 export default function ChatPage() {
-  const { user, token, logout } = useAuth();
-  const { onMessageReceived, onFriendRequest, onFriendRequestAccepted, onFriendDeleted, onFriendRequestRejected } = useWebSocket();
+  const { user, token, logout, updateUser } = useAuth();
+  const { theme, setTheme } = useTheme();
+  const {
+    onMessageReceived,
+    onFriendRequest,
+    onFriendRequestAccepted,
+    onFriendDeleted,
+    onFriendRequestRejected,
+    onUserBlocked,
+    onUserUnblocked,
+  } = useWebSocket();
 
   const [conversations, setConversations] = useState([]);
   const [friends, setFriends] = useState([]);
@@ -62,6 +72,13 @@ export default function ChatPage() {
   const [blockingUsername, setBlockingUsername] = useState("");
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [unblockingUsername, setUnblockingUsername] = useState("");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsForm, setSettingsForm] = useState(() => ({
+    messageRetentionHours: String(user?.settings?.messageRetentionHours ?? 72),
+    theme: user?.settings?.theme ?? theme ?? "dark",
+  }));
 
   const messageEndRef = useRef(null);
   const friendDropdownRef = useRef(null);
@@ -74,6 +91,49 @@ export default function ChatPage() {
     const timeout = setTimeout(() => setToast(null), 3500);
     return () => clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    if (isSettingsOpen) {
+      return;
+    }
+    setSettingsForm({
+      messageRetentionHours: String(user?.settings?.messageRetentionHours ?? 72),
+      theme: user?.settings?.theme ?? theme ?? "dark",
+    });
+  }, [isSettingsOpen, user?.settings?.messageRetentionHours, user?.settings?.theme, theme]);
+
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+    let isMounted = true;
+    async function syncSettings() {
+      try {
+        const response = await api.userSettings(token);
+        if (!isMounted) {
+          return;
+        }
+        updateUser((previous) => {
+          if (!previous) {
+            return previous;
+          }
+          return {
+            ...previous,
+            settings: response.settings,
+          };
+        });
+        if (response.settings?.theme) {
+          setTheme(response.settings.theme);
+        }
+      } catch (error) {
+        console.warn("Failed to load settings:", error);
+      }
+    }
+    syncSettings();
+    return () => {
+      isMounted = false;
+    };
+  }, [setTheme, token, updateUser]);
 
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedId),
@@ -389,6 +449,44 @@ export default function ChatPage() {
     return unsubscribe;
   }, [onFriendRequestRejected]);
 
+  // Listen for block/unblock events targeting current user
+  useEffect(() => {
+    const unsubscribeBlocked = onUserBlocked((blocker) => {
+      setFriendSearchResult((previous) => {
+        if (!previous || previous.user.id !== blocker.id) {
+          return previous;
+        }
+        return { ...previous, user: blocker, relationshipStatus: "blocked_by" };
+      });
+      setFriends((prev) => prev.filter((friend) => friend.id !== blocker.id));
+      if (selectedId === blocker.id) {
+        setSelectedId(null);
+        setMessages([]);
+      }
+      setToast({ message: `${blocker.username} has blocked you.`, tone: "info" });
+    });
+
+    const unsubscribeUnblocked = onUserUnblocked((unblocker) => {
+      setFriendSearchResult((previous) => {
+        if (!previous || previous.user.id !== unblocker.id) {
+          return previous;
+        }
+        return { ...previous, user: unblocker, relationshipStatus: "friends" };
+      });
+      setFriends((prev) => {
+        const exists = prev.some((entry) => entry.id === unblocker.id);
+        if (exists) return prev;
+        return [...prev, unblocker].sort((a, b) => a.username.localeCompare(b.username));
+      });
+      setToast({ message: `${unblocker.username} unblocked you.`, tone: "success" });
+    });
+
+    return () => {
+      unsubscribeBlocked();
+      unsubscribeUnblocked();
+    };
+  }, [onUserBlocked, onUserUnblocked, selectedId]);
+
   const handleSendMessage = async (event) => {
     event.preventDefault();
     if (!messageDraft.trim() || !selectedId) {
@@ -689,6 +787,50 @@ export default function ChatPage() {
     });
   };
 
+  const handleThemeChange = (nextTheme) => {
+    const safeTheme = nextTheme === "light" ? "light" : "dark";
+    setSettingsForm((prev) => ({
+      ...prev,
+      theme: safeTheme,
+    }));
+    setTheme(safeTheme);
+  };
+
+  const handleSettingsSubmit = async (event) => {
+    event?.preventDefault();
+
+    const hours = Number(settingsForm.messageRetentionHours);
+    if (!Number.isInteger(hours) || hours < 1 || hours > 336) {
+      setSettingsError("Retention must be between 1 and 336 hours.");
+      return;
+    }
+
+    setIsSavingSettings(true);
+    setSettingsError("");
+    try {
+      const response = await api.updateSettings(token, {
+        messageRetentionHours: hours,
+        theme: settingsForm.theme,
+      });
+      updateUser((previous) => {
+        if (!previous) {
+          return previous;
+        }
+        return {
+          ...previous,
+          settings: response.settings,
+        };
+      });
+      setTheme(response.settings.theme);
+      setToast({ message: "✓ Settings updated.", tone: "success" });
+      setIsSettingsOpen(false);
+    } catch (error) {
+      setSettingsError(error.message);
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
   const relationshipLabels = {
     friends: "You're friends",
     pending_outgoing: "Request sent",
@@ -822,6 +964,98 @@ export default function ChatPage() {
           {toast.message}
         </div>
       )}
+      {isSettingsOpen && (
+        <div
+          className="settings-overlay"
+          onClick={() => {
+            if (!isSavingSettings) {
+              setIsSettingsOpen(false);
+            }
+          }}
+        >
+          <div
+            className="settings-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="settings-modal-header">
+              <div>
+                <h2>Preferences</h2>
+                <p>Control auto-deletion and appearance.</p>
+              </div>
+              <button
+                type="button"
+                className="settings-close"
+                onClick={() => setIsSettingsOpen(false)}
+                aria-label="Close settings"
+              >
+                ×
+              </button>
+            </header>
+            <form className="settings-form" onSubmit={handleSettingsSubmit}>
+              <label className="field ghost">
+                <span className="field-label">Auto-delete after (hours)</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="336"
+                  value={settingsForm.messageRetentionHours}
+                  onChange={(event) => {
+                    setSettingsError("");
+                    setSettingsForm((prev) => ({
+                      ...prev,
+                      messageRetentionHours: event.target.value,
+                    }));
+                  }}
+                />
+                <span className="field-note">Minimum 1 hour, maximum 14 days.</span>
+              </label>
+              <div className="field ghost">
+                <span className="field-label">Theme</span>
+                <div className="theme-options">
+                  <button
+                    type="button"
+                    className={`theme-chip ${settingsForm.theme === "light" ? "active" : ""}`}
+                    onClick={() => {
+                      setSettingsError("");
+                      handleThemeChange("light");
+                    }}
+                  >
+                    🌞 Light
+                  </button>
+                  <button
+                    type="button"
+                    className={`theme-chip ${settingsForm.theme === "dark" ? "active" : ""}`}
+                    onClick={() => {
+                      setSettingsError("");
+                      handleThemeChange("dark");
+                    }}
+                  >
+                    🌙 Dark
+                  </button>
+                </div>
+              </div>
+              {settingsError && <p className="form-error banner">{settingsError}</p>}
+              <div className="settings-actions">
+                <button
+                  type="button"
+                  className="ghost-button inline"
+                  onClick={() => setIsSettingsOpen(false)}
+                  disabled={isSavingSettings}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="ghost-button inline primary"
+                  disabled={isSavingSettings}
+                >
+                  {isSavingSettings ? "Saving..." : "Save changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       <div className="chat-layout">
         <aside className="sidebar sidebar-rail">
           <div className="sidebar-profile">
@@ -855,6 +1089,10 @@ export default function ChatPage() {
             type="button"
             className="sidebar-icon"
             title="Settings"
+            onClick={() => {
+              setSettingsError("");
+              setIsSettingsOpen(true);
+            }}
           >
             <span aria-hidden>⚙️</span>
             <span>Settings</span>
