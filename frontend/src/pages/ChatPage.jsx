@@ -3,8 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useWebSocket } from "../context/WebSocketContext.jsx";
 import { api } from "../lib/api.js";
-import { decryptMessageComplete, importPrivateKey } from "../lib/crypto.js";
-import { getPrivateKey } from "../lib/keyStorage.js";
+import { decryptMessageComplete, importPrivateKey, encryptMessageForRecipient, generateAESKey, encryptMessage, encryptAESKey } from "../lib/crypto.js";
+import { getPrivateKey, getPublicKey } from "../lib/keyStorage.js";
 
 const parseTimestamp = (value) => {
   if (!value) {
@@ -66,6 +66,7 @@ export default function ChatPage() {
   const messageEndRef = useRef(null);
   const friendDropdownRef = useRef(null);
   const friendIconRef = useRef(null);
+  const publicKeyCache = useRef({});
 
   useEffect(() => {
     if (!toast) {
@@ -430,13 +431,54 @@ export default function ChatPage() {
 
   const handleSendMessage = async (event) => {
     event.preventDefault();
-    if (!messageDraft.trim() || !selectedId) {
+    const content = messageDraft.trim();
+    if (!content || !selectedId) {
       return;
     }
+
+    // Clear draft immediately so user can type next message
+    // This also prevents duplicate sends on spam-click
+    setMessageDraft("");
     setIsSending(true);
     setToast(null);
     try {
-      const response = await api.sendMessage(token, selectedId, messageDraft.trim());
+
+      // Get recipient's public key (from cache or fetch)
+      let recipientPublicKey = publicKeyCache.current[selectedId];
+      if (!recipientPublicKey) {
+        const keyResponse = await api.getPublicKey(token, selectedId);
+        recipientPublicKey = keyResponse.key.publicKey;
+        publicKeyCache.current[selectedId] = recipientPublicKey;
+      }
+
+      // Get sender's public key from localStorage
+      const senderPublicKey = getPublicKey(user.id);
+      if (!senderPublicKey) {
+        throw new Error("Your encryption key is missing. Please log out and log back in.");
+      }
+
+      // Generate AES key for this message
+      const aesKeyBytes = await generateAESKey();
+
+      // Encrypt message content with AES
+      const { encryptedContent, iv } = await encryptMessage(content, aesKeyBytes);
+
+      // Encrypt AES key for recipient
+      const recipientEncrypted = await encryptAESKey(aesKeyBytes, recipientPublicKey);
+
+      // Encrypt AES key for sender (so they can read their own messages)
+      const senderEncrypted = await encryptAESKey(aesKeyBytes, senderPublicKey);
+
+      // Send encrypted message to server
+      const response = await api.sendEncryptedMessage(token, selectedId, {
+        encryptedContent,
+        iv,
+        recipientEncryptedKey: recipientEncrypted.encryptedAESKey,
+        recipientEphemeralKey: recipientEncrypted.ephemeralPublicKey,
+        senderEncryptedKey: senderEncrypted.encryptedAESKey,
+        senderEphemeralKey: senderEncrypted.ephemeralPublicKey,
+      });
+
       const newMessage = response.message;
 
       setMessages((previous) => [...previous, newMessage]);
@@ -453,7 +495,6 @@ export default function ChatPage() {
         // Sort by updatedAt descending (newest first)
         return updated.sort((a, b) => getTimestampMs(b.updatedAt) - getTimestampMs(a.updatedAt));
       });
-      setMessageDraft("");
     } catch (error) {
       setToast({ message: error.message, tone: "error" });
     } finally {

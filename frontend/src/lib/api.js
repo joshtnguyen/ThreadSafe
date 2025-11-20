@@ -49,6 +49,14 @@ export const api = {
       token,
       body: { content },
     }),
+  sendEncryptedMessage: (token, conversationId, encryptedData) =>
+    request(`/conversations/${conversationId}/messages`, {
+      method: "POST",
+      token,
+      body: { encrypted: true, ...encryptedData },
+    }),
+  getPublicKey: (token, userId) =>
+    request(`/keys/public/${userId}`, { token }),
   friends: (token) => request("/friends", { token }),
   friendRequests: (token) => request("/friends/requests", { token }),
   blockedFriends: (token) => request("/friends/blocked", { token }),

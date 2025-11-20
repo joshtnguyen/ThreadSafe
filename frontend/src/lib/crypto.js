@@ -208,6 +208,162 @@ export async function decryptMessageComplete(message, privateKey) {
 }
 
 // ============================================================================
+// Encryption functions (for client-side encryption)
+// ============================================================================
+
+/**
+ * Generate a random AES-256 key
+ * @returns {Promise<ArrayBuffer>} Raw AES key (32 bytes)
+ */
+export async function generateAESKey() {
+  const key = await window.crypto.subtle.generateKey(
+    {
+      name: 'AES-GCM',
+      length: 256,
+    },
+    true,
+    ['encrypt', 'decrypt']
+  );
+  return await window.crypto.subtle.exportKey('raw', key);
+}
+
+/**
+ * Encrypt an AES key using ECIES (ECDH + HKDF + AES-GCM)
+ * Compatible with Python backend's decrypt_aes_key_with_private_key
+ * @param {ArrayBuffer} aesKeyBytes Raw AES key (32 bytes)
+ * @param {string} recipientPublicKeyPem Base64-encoded recipient's public key
+ * @returns {Promise<{encryptedAESKey: string, ephemeralPublicKey: string}>}
+ */
+export async function encryptAESKey(aesKeyBytes, recipientPublicKeyPem) {
+  // Generate ephemeral key pair for ECDH
+  const ephemeralKeyPair = await generateKeyPair();
+  const ephemeralPublicKeyPem = await exportPublicKey(ephemeralKeyPair.publicKey);
+
+  // Import recipient's public key
+  const recipientPublicKey = await importPublicKey(recipientPublicKeyPem);
+
+  // Perform ECDH to derive shared secret
+  const sharedSecret = await window.crypto.subtle.deriveBits(
+    {
+      name: 'ECDH',
+      public: recipientPublicKey,
+    },
+    ephemeralKeyPair.privateKey,
+    256 // 256 bits = 32 bytes
+  );
+
+  // Derive encryption key using HKDF (matching Python's HKDF with info='encryption')
+  const derivedKey = await window.crypto.subtle.importKey(
+    'raw',
+    sharedSecret,
+    'HKDF',
+    false,
+    ['deriveKey']
+  );
+
+  const aesKey = await window.crypto.subtle.deriveKey(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new Uint8Array([]), // No salt (same as Python's salt=None)
+      info: new TextEncoder().encode('encryption'), // Same as Python's info=b'encryption'
+    },
+    derivedKey,
+    {
+      name: 'AES-GCM',
+      length: 256,
+    },
+    false,
+    ['encrypt']
+  );
+
+  // Generate random nonce
+  const nonce = window.crypto.getRandomValues(new Uint8Array(12));
+
+  // Encrypt the AES key
+  const encryptedAESKey = await window.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv: nonce,
+    },
+    aesKey,
+    aesKeyBytes
+  );
+
+  // Combine nonce + ciphertext
+  const combined = new Uint8Array(nonce.length + encryptedAESKey.byteLength);
+  combined.set(nonce);
+  combined.set(new Uint8Array(encryptedAESKey), nonce.length);
+
+  return {
+    encryptedAESKey: arrayBufferToBase64(combined.buffer),
+    ephemeralPublicKey: ephemeralPublicKeyPem,
+  };
+}
+
+/**
+ * Encrypt a message using AES-256-GCM
+ * @param {string} plaintext The message to encrypt
+ * @param {ArrayBuffer} aesKeyBytes Raw AES key (32 bytes)
+ * @returns {Promise<{encryptedContent: string, iv: string}>}
+ */
+export async function encryptMessage(plaintext, aesKeyBytes) {
+  // Import AES key
+  const aesKey = await window.crypto.subtle.importKey(
+    'raw',
+    aesKeyBytes,
+    {
+      name: 'AES-GCM',
+      length: 256,
+    },
+    false,
+    ['encrypt']
+  );
+
+  // Generate random IV
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+
+  // Encrypt
+  const encrypted = await window.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv: iv,
+    },
+    aesKey,
+    new TextEncoder().encode(plaintext)
+  );
+
+  return {
+    encryptedContent: arrayBufferToBase64(encrypted),
+    iv: arrayBufferToBase64(iv.buffer),
+  };
+}
+
+/**
+ * Full message encryption for a recipient (combines AES and ECIES encryption)
+ * @param {string} plaintext The message to encrypt
+ * @param {string} recipientPublicKeyPem Base64-encoded recipient's public key
+ * @returns {Promise<{encryptedContent: string, iv: string, encryptedAESKey: string, ephemeralPublicKey: string}>}
+ */
+export async function encryptMessageForRecipient(plaintext, recipientPublicKeyPem) {
+  // Step 1: Generate random AES key
+  const aesKeyBytes = await generateAESKey();
+
+  // Step 2: Encrypt message with AES key
+  const { encryptedContent, iv } = await encryptMessage(plaintext, aesKeyBytes);
+
+  // Step 3: Encrypt AES key with recipient's public key
+  const { encryptedAESKey, ephemeralPublicKey } = await encryptAESKey(aesKeyBytes, recipientPublicKeyPem);
+
+  return {
+    encryptedContent,
+    iv,
+    encryptedAESKey,
+    ephemeralPublicKey,
+  };
+}
+
+// ============================================================================
 // Helper functions
 // ============================================================================
 

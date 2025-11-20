@@ -243,54 +243,93 @@ def create_message(conversation_id: int):
         return jsonify({"message": "You must be friends to send messages."}), 403
 
     payload = request.get_json(silent=True) or {}
-    content = (payload.get("content") or "").strip()
 
-    if not content:
-        return jsonify({"message": "Message content is required."}), 400
+    # Check if client sent pre-encrypted message
+    is_encrypted = payload.get("encrypted", False)
 
-    if len(content) > 2000:
-        return jsonify({"message": "Message must not exceed 2000 characters."}), 400
+    if is_encrypted:
+        # Client-side encryption - use pre-encrypted data directly
+        encrypted_content = payload.get("encryptedContent", "")
+        iv = payload.get("iv", "")
+        recipient_encrypted_key = payload.get("recipientEncryptedKey", "")
+        recipient_ephemeral_key = payload.get("recipientEphemeralKey", "")
+        sender_encrypted_key = payload.get("senderEncryptedKey", "")
+        sender_ephemeral_key = payload.get("senderEphemeralKey", "")
 
-    # Fetch recipient's public key for encryption
-    recipient_public_key = PublicKey.query.filter_by(userID=conversation_id).first()
-    if not recipient_public_key:
-        return jsonify({"message": "Recipient's encryption key not found. They may need to re-register."}), 404
+        if not all([encrypted_content, iv, recipient_encrypted_key, recipient_ephemeral_key,
+                    sender_encrypted_key, sender_ephemeral_key]):
+            return jsonify({"message": "Missing encryption fields."}), 400
 
-    # Fetch sender's public key for double encryption (so they can read their own message)
-    sender_public_key = PublicKey.query.filter_by(userID=current_user_id).first()
-    if not sender_public_key:
-        return jsonify({"message": "Your encryption key not found. Please re-login."}), 404
+        # Store pre-encrypted message
+        message = Message(
+            senderID=current_user_id,
+            receiverID=conversation_id,
+            # Recipient's encrypted copy
+            encryptedContent=encrypted_content,
+            iv=iv,
+            hmac="",  # Not used with client-side encryption
+            encrypted_aes_key=recipient_encrypted_key,
+            ephemeral_public_key=recipient_ephemeral_key,
+            # Sender's encrypted copy
+            sender_encrypted_content=encrypted_content,
+            sender_iv=iv,
+            sender_hmac="",
+            sender_encrypted_aes_key=sender_encrypted_key,
+            sender_ephemeral_public_key=sender_ephemeral_key,
+            status="Sent",
+            msg_Type="text",
+            expiryTime=Message.default_expiry_time(is_group=False),
+        )
+    else:
+        # Server-side encryption (legacy support)
+        content = (payload.get("content") or "").strip()
 
-    # Encrypt the message twice: once for recipient, once for sender
-    try:
-        # Encrypt for recipient
-        recipient_encrypted = encrypt_message_for_user(content, recipient_public_key.publicKey)
+        if not content:
+            return jsonify({"message": "Message content is required."}), 400
 
-        # Encrypt for sender (so they can read their own message)
-        sender_encrypted = encrypt_message_for_user(content, sender_public_key.publicKey)
-    except Exception as e:
-        return jsonify({"message": f"Encryption failed: {str(e)}"}), 500
+        if len(content) > 2000:
+            return jsonify({"message": "Message must not exceed 2000 characters."}), 400
 
-    # Store both encrypted versions in database
-    message = Message(
-        senderID=current_user_id,
-        receiverID=conversation_id,
-        # Recipient's encrypted copy
-        encryptedContent=recipient_encrypted['encrypted_content'],
-        iv=recipient_encrypted['iv'],
-        hmac=recipient_encrypted['auth_tag'],
-        encrypted_aes_key=recipient_encrypted['encrypted_aes_key'],
-        ephemeral_public_key=recipient_encrypted['ephemeral_public_key'],
-        # Sender's encrypted copy
-        sender_encrypted_content=sender_encrypted['encrypted_content'],
-        sender_iv=sender_encrypted['iv'],
-        sender_hmac=sender_encrypted['auth_tag'],
-        sender_encrypted_aes_key=sender_encrypted['encrypted_aes_key'],
-        sender_ephemeral_public_key=sender_encrypted['ephemeral_public_key'],
-        status="Sent",
-        msg_Type="text",
-        expiryTime=Message.default_expiry_time(is_group=False),
-    )
+        # Fetch recipient's public key for encryption
+        recipient_public_key = PublicKey.query.filter_by(userID=conversation_id).first()
+        if not recipient_public_key:
+            return jsonify({"message": "Recipient's encryption key not found. They may need to re-register."}), 404
+
+        # Fetch sender's public key for double encryption (so they can read their own message)
+        sender_public_key = PublicKey.query.filter_by(userID=current_user_id).first()
+        if not sender_public_key:
+            return jsonify({"message": "Your encryption key not found. Please re-login."}), 404
+
+        # Encrypt the message twice: once for recipient, once for sender
+        try:
+            # Encrypt for recipient
+            recipient_encrypted = encrypt_message_for_user(content, recipient_public_key.publicKey)
+
+            # Encrypt for sender (so they can read their own message)
+            sender_encrypted = encrypt_message_for_user(content, sender_public_key.publicKey)
+        except Exception as e:
+            return jsonify({"message": f"Encryption failed: {str(e)}"}), 500
+
+        # Store both encrypted versions in database
+        message = Message(
+            senderID=current_user_id,
+            receiverID=conversation_id,
+            # Recipient's encrypted copy
+            encryptedContent=recipient_encrypted['encrypted_content'],
+            iv=recipient_encrypted['iv'],
+            hmac=recipient_encrypted['auth_tag'],
+            encrypted_aes_key=recipient_encrypted['encrypted_aes_key'],
+            ephemeral_public_key=recipient_encrypted['ephemeral_public_key'],
+            # Sender's encrypted copy
+            sender_encrypted_content=sender_encrypted['encrypted_content'],
+            sender_iv=sender_encrypted['iv'],
+            sender_hmac=sender_encrypted['auth_tag'],
+            sender_encrypted_aes_key=sender_encrypted['encrypted_aes_key'],
+            sender_ephemeral_public_key=sender_encrypted['ephemeral_public_key'],
+            status="Sent",
+            msg_Type="text",
+            expiryTime=Message.default_expiry_time(is_group=False),
+        )
 
     db.session.add(message)
     db.session.commit()
