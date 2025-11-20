@@ -297,8 +297,9 @@ input {
 .chat-shell {
   height: 100vh;
   min-height: 100vh;
-  padding: clamp(16px, 3vw, 32px);
-  width: min(1500px, 100%);
+  max-height: 100vh;
+  padding: clamp(12px, 3vw, 32px);
+  width: min(1500px, 96vw);
   margin: 0 auto;
   overflow: hidden;
   display: flex;
@@ -309,7 +310,7 @@ input {
 
 .chat-layout {
   display: grid;
-  grid-template-columns: 125px minmax(0, 1fr);
+  grid-template-columns: clamp(96px, 12vw, 140px) minmax(0, 1fr);
   gap: 0;
   flex: 1;
   min-height: 0;
@@ -579,9 +580,9 @@ input {
 
 .chat-columns {
   display: grid;
-  grid-template-columns: minmax(200px, 0.5fr) minmax(420px, 1.3fr);
-  gap: 20px;
-  padding: 24px;
+  grid-template-columns: minmax(240px, 0.9fr) minmax(360px, 1.35fr);
+  gap: clamp(16px, 2vw, 24px);
+  padding: clamp(16px, 2vw, 24px);
   min-height: 0;
   height: 100%;
   box-sizing: border-box;
@@ -1084,15 +1085,73 @@ input {
   background: rgba(255, 255, 255, 0.05);
 }
 
-@media (max-width: 1200px) {
-  .chat-layout {
-    grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.2fr) minmax(350px, 2fr);
-  }
-}
-
 @media (max-width: 540px) {
   .auth-card {
     padding: 40px 32px;
     border-radius: 32px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .chat-layout {
+    grid-template-columns: clamp(90px, 10vw, 120px) minmax(0, 1fr);
+  }
+
+  .chat-columns {
+    grid-template-columns: minmax(220px, 0.85fr) minmax(320px, 1.15fr);
+  }
+}
+
+@media (max-width: 980px) {
+  .chat-shell {
+    height: auto;
+    min-height: 100vh;
+    max-height: none;
+  }
+
+  .chat-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .sidebar {
+    flex-direction: row;
+    justify-content: space-between;
+    border-radius: 24px;
+    box-shadow: var(--shadow-soft);
+  }
+
+  .sidebar-rail {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .sidebar-nav {
+    flex: 1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .chat-columns {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .conversation-list,
+  .chat-panel {
+    max-height: none;
+    height: auto;
+  }
+
+  .conversation-list {
+    border-radius: 24px;
+    border: 1px solid var(--card-border);
+  }
+
+  .message-list {
+    max-height: 60vh;
   }
 }
