@@ -62,6 +62,7 @@ export default function ChatPage() {
   const [isAddingFriend, setIsAddingFriend] = useState(false);
   const [isOpeningChat, setIsOpeningChat] = useState(false);
   const [friendMenuOpen, setFriendMenuOpen] = useState(null);
+  const [friendMenuPosition, setFriendMenuPosition] = useState({ x: 0, y: 0 });
   const [privateKey, setPrivateKey] = useState(null);
   const [decryptedMessages, setDecryptedMessages] = useState({});
   const [isFriendDropdownOpen, setIsFriendDropdownOpen] = useState(false);
@@ -1313,6 +1314,11 @@ export default function ChatPage() {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                setFriendMenuPosition({
+                                  x: rect.right + 12,
+                                  y: rect.top + rect.height / 2,
+                                });
                                 setFriendMenuOpen(friendMenuOpen === friend.id ? null : friend.id);
                               }}
                               style={{
@@ -1333,35 +1339,73 @@ export default function ChatPage() {
                             {friendMenuOpen === friend.id && (
                               <div
                                 style={{
-                                  position: "absolute",
-                                  right: "8px",
-                                  top: "100%",
+                                  position: "fixed",
+                                  left: `${friendMenuPosition.x}px`,
+                                  top: `${friendMenuPosition.y}px`,
+                                  transform: "translateY(-50%)",
                                   backgroundColor: "white",
                                   border: "1px solid #ddd",
-                                  borderRadius: "4px",
-                                  boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-                                  zIndex: 1000,
-                                  minWidth: "120px",
+                                  borderRadius: "6px",
+                                  boxShadow: "0 12px 30px rgba(0,0,0,0.22)",
+                                  zIndex: 4000,
+                                  minWidth: "170px",
+                                  padding: "6px",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "6px",
                                 }}
                               >
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    if (
+                                      window.confirm(
+                                        `Block ${friend.username}? They won't be able to message you.`
+                                      )
+                                    ) {
+                                      setFriendMenuOpen(null);
+                                      handleBlockUser(friend.username);
+                                    }
+                                  }}
+                                  style={{
+                                    width: "100%",
+                                    padding: "10px 12px",
+                                    border: "none",
+                                    background: "#fff6e5",
+                                    textAlign: "left",
+                                    cursor: "pointer",
+                                    color: "#b26a00",
+                                    borderRadius: "4px",
+                                    fontWeight: 600,
+                                    transition: "background-color 0.15s ease",
+                                  }}
+                                  onMouseEnter={(e) => (e.target.style.backgroundColor = "#ffe6bf")}
+                                  onMouseLeave={(e) => (e.target.style.backgroundColor = "#fff6e5")}
+                                >
+                                  Block
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
                                     if (window.confirm(`Remove ${friend.username} from friends?`)) {
+                                      setFriendMenuOpen(null);
                                       handleDeleteFriend(friend.id);
                                     }
                                   }}
                                   style={{
                                     width: "100%",
-                                    padding: "8px 12px",
+                                    padding: "10px 12px",
                                     border: "none",
-                                    background: "transparent",
+                                    background: "#fff1f1",
                                     textAlign: "left",
                                     cursor: "pointer",
                                     color: "#d32f2f",
+                                    borderRadius: "4px",
+                                    fontWeight: 600,
+                                    transition: "background-color 0.15s ease",
                                   }}
-                                  onMouseEnter={(e) => e.target.style.backgroundColor = "#f5f5f5"}
-                                  onMouseLeave={(e) => e.target.style.backgroundColor = "transparent"}
+                                  onMouseEnter={(e) => (e.target.style.backgroundColor = "#ffe1e1")}
+                                  onMouseLeave={(e) => (e.target.style.backgroundColor = "#fff1f1")}
                                 >
                                   Delete
                                 </button>
