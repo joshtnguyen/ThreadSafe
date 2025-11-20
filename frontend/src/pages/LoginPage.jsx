@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../context/AuthContext.jsx";
 import { api } from "../lib/api.js";
-import { generateKeyPair, exportPrivateKey, exportPublicKey } from "../lib/crypto.js";
+import { generateKeyPair, exportPrivateKey, exportPublicKey, decryptPrivateKeyWithPassword } from "../lib/crypto.js";
 import { getPrivateKey, getPublicKey, storePrivateKey, storePublicKey } from "../lib/keyStorage.js";
 
 export default function LoginPage() {
@@ -25,7 +25,7 @@ export default function LoginPage() {
 
     try {
       const response = await api.login(form);
-      await ensureEncryptionKeys(response.user.id, response.accessToken);
+      await ensureEncryptionKeys(response.user.id, response.accessToken, response, form.password);
       login(response.user, response.accessToken);
       navigate("/app");
     } catch (err) {
@@ -35,27 +35,54 @@ export default function LoginPage() {
     }
   };
 
-  const ensureEncryptionKeys = async (userId, accessToken) => {
+  const ensureEncryptionKeys = async (userId, accessToken, loginResponse, password) => {
     let privateKeyPem = getPrivateKey(userId);
     let publicKeyPem = getPublicKey(userId);
 
     if (!privateKeyPem || !publicKeyPem) {
-      const keyPair = await generateKeyPair();
-      publicKeyPem = await exportPublicKey(keyPair.publicKey);
-      privateKeyPem = await exportPrivateKey(keyPair.privateKey);
-      storePrivateKey(privateKeyPem, userId);
-      storePublicKey(publicKeyPem, userId);
+      // Check if server has encrypted private key backup
+      if (loginResponse.encryptedPrivateKey && loginResponse.salt && loginResponse.iv) {
+        // Decrypt private key from server backup using password
+        try {
+          privateKeyPem = await decryptPrivateKeyWithPassword(
+            loginResponse.encryptedPrivateKey,
+            loginResponse.salt,
+            loginResponse.iv,
+            password
+          );
 
-      try {
-        await api.rotatePublicKey(accessToken, publicKeyPem);
-      } catch (rotationError) {
-        if (rotationError.message.includes("No existing key")) {
-          await api.registerPublicKey(accessToken, publicKeyPem);
-        } else {
-          throw rotationError;
+          // Fetch the public key from server
+          const keyResponse = await api.myPublicKey(accessToken);
+          publicKeyPem = keyResponse.key.publicKey;
+
+          // Store recovered keys locally
+          storePrivateKey(privateKeyPem, userId);
+          storePublicKey(publicKeyPem, userId);
+        } catch (decryptError) {
+          // If decryption fails, generate new keys (password may have changed)
+          console.error("Failed to decrypt private key backup:", decryptError);
+          throw new Error("Failed to recover encryption keys. You may need to re-register.");
+        }
+      } else {
+        // No backup available, generate new keys
+        const keyPair = await generateKeyPair();
+        publicKeyPem = await exportPublicKey(keyPair.publicKey);
+        privateKeyPem = await exportPrivateKey(keyPair.privateKey);
+        storePrivateKey(privateKeyPem, userId);
+        storePublicKey(publicKeyPem, userId);
+
+        try {
+          await api.rotatePublicKey(accessToken, publicKeyPem);
+        } catch (rotationError) {
+          if (rotationError.message.includes("No existing key")) {
+            await api.registerPublicKey(accessToken, publicKeyPem);
+          } else {
+            throw rotationError;
+          }
         }
       }
     } else {
+      // Keys exist locally, verify with server
       try {
         await api.myPublicKey(accessToken);
       } catch (error) {

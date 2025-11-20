@@ -208,6 +208,162 @@ export async function decryptMessageComplete(message, privateKey) {
 }
 
 // ============================================================================
+// Encryption functions (for client-side encryption)
+// ============================================================================
+
+/**
+ * Generate a random AES-256 key
+ * @returns {Promise<ArrayBuffer>} Raw AES key (32 bytes)
+ */
+export async function generateAESKey() {
+  const key = await window.crypto.subtle.generateKey(
+    {
+      name: 'AES-GCM',
+      length: 256,
+    },
+    true,
+    ['encrypt', 'decrypt']
+  );
+  return await window.crypto.subtle.exportKey('raw', key);
+}
+
+/**
+ * Encrypt an AES key using ECIES (ECDH + HKDF + AES-GCM)
+ * Compatible with Python backend's decrypt_aes_key_with_private_key
+ * @param {ArrayBuffer} aesKeyBytes Raw AES key (32 bytes)
+ * @param {string} recipientPublicKeyPem Base64-encoded recipient's public key
+ * @returns {Promise<{encryptedAESKey: string, ephemeralPublicKey: string}>}
+ */
+export async function encryptAESKey(aesKeyBytes, recipientPublicKeyPem) {
+  // Generate ephemeral key pair for ECDH
+  const ephemeralKeyPair = await generateKeyPair();
+  const ephemeralPublicKeyPem = await exportPublicKey(ephemeralKeyPair.publicKey);
+
+  // Import recipient's public key
+  const recipientPublicKey = await importPublicKey(recipientPublicKeyPem);
+
+  // Perform ECDH to derive shared secret
+  const sharedSecret = await window.crypto.subtle.deriveBits(
+    {
+      name: 'ECDH',
+      public: recipientPublicKey,
+    },
+    ephemeralKeyPair.privateKey,
+    256 // 256 bits = 32 bytes
+  );
+
+  // Derive encryption key using HKDF (matching Python's HKDF with info='encryption')
+  const derivedKey = await window.crypto.subtle.importKey(
+    'raw',
+    sharedSecret,
+    'HKDF',
+    false,
+    ['deriveKey']
+  );
+
+  const aesKey = await window.crypto.subtle.deriveKey(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new Uint8Array([]), // No salt (same as Python's salt=None)
+      info: new TextEncoder().encode('encryption'), // Same as Python's info=b'encryption'
+    },
+    derivedKey,
+    {
+      name: 'AES-GCM',
+      length: 256,
+    },
+    false,
+    ['encrypt']
+  );
+
+  // Generate random nonce
+  const nonce = window.crypto.getRandomValues(new Uint8Array(12));
+
+  // Encrypt the AES key
+  const encryptedAESKey = await window.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv: nonce,
+    },
+    aesKey,
+    aesKeyBytes
+  );
+
+  // Combine nonce + ciphertext
+  const combined = new Uint8Array(nonce.length + encryptedAESKey.byteLength);
+  combined.set(nonce);
+  combined.set(new Uint8Array(encryptedAESKey), nonce.length);
+
+  return {
+    encryptedAESKey: arrayBufferToBase64(combined.buffer),
+    ephemeralPublicKey: ephemeralPublicKeyPem,
+  };
+}
+
+/**
+ * Encrypt a message using AES-256-GCM
+ * @param {string} plaintext The message to encrypt
+ * @param {ArrayBuffer} aesKeyBytes Raw AES key (32 bytes)
+ * @returns {Promise<{encryptedContent: string, iv: string}>}
+ */
+export async function encryptMessage(plaintext, aesKeyBytes) {
+  // Import AES key
+  const aesKey = await window.crypto.subtle.importKey(
+    'raw',
+    aesKeyBytes,
+    {
+      name: 'AES-GCM',
+      length: 256,
+    },
+    false,
+    ['encrypt']
+  );
+
+  // Generate random IV
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+
+  // Encrypt
+  const encrypted = await window.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv: iv,
+    },
+    aesKey,
+    new TextEncoder().encode(plaintext)
+  );
+
+  return {
+    encryptedContent: arrayBufferToBase64(encrypted),
+    iv: arrayBufferToBase64(iv.buffer),
+  };
+}
+
+/**
+ * Full message encryption for a recipient (combines AES and ECIES encryption)
+ * @param {string} plaintext The message to encrypt
+ * @param {string} recipientPublicKeyPem Base64-encoded recipient's public key
+ * @returns {Promise<{encryptedContent: string, iv: string, encryptedAESKey: string, ephemeralPublicKey: string}>}
+ */
+export async function encryptMessageForRecipient(plaintext, recipientPublicKeyPem) {
+  // Step 1: Generate random AES key
+  const aesKeyBytes = await generateAESKey();
+
+  // Step 2: Encrypt message with AES key
+  const { encryptedContent, iv } = await encryptMessage(plaintext, aesKeyBytes);
+
+  // Step 3: Encrypt AES key with recipient's public key
+  const { encryptedAESKey, ephemeralPublicKey } = await encryptAESKey(aesKeyBytes, recipientPublicKeyPem);
+
+  return {
+    encryptedContent,
+    iv,
+    encryptedAESKey,
+    ephemeralPublicKey,
+  };
+}
+
+// ============================================================================
 // Helper functions
 // ============================================================================
 
@@ -251,6 +407,124 @@ function base64ToArrayBuffer(base64) {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+// ============================================================================
+// Password-derived key functions for key backup/recovery
+// ============================================================================
+
+/**
+ * Derive an AES-256 key from password using PBKDF2
+ * @param {string} password User's password
+ * @param {Uint8Array} salt Random salt (16 bytes recommended)
+ * @returns {Promise<CryptoKey>} Derived AES key for encrypting private key
+ */
+export async function deriveKeyFromPassword(password, salt) {
+  // Import password as raw key material
+  const passwordKey = await window.crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  // Derive AES-256 key using PBKDF2
+  return await window.crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: 100000, // High iteration count for security
+      hash: 'SHA-256',
+    },
+    passwordKey,
+    {
+      name: 'AES-GCM',
+      length: 256,
+    },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * Encrypt private key with password-derived key for backup
+ * @param {string} privateKeyPem Base64-encoded PEM private key
+ * @param {string} password User's password
+ * @returns {Promise<{encryptedPrivateKey: string, salt: string, iv: string}>}
+ */
+export async function encryptPrivateKeyWithPassword(privateKeyPem, password) {
+  // Generate random salt and IV
+  const salt = window.crypto.getRandomValues(new Uint8Array(16));
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+
+  // Derive key from password
+  const derivedKey = await deriveKeyFromPassword(password, salt);
+
+  // Encrypt private key
+  const encrypted = await window.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv: iv,
+    },
+    derivedKey,
+    new TextEncoder().encode(privateKeyPem)
+  );
+
+  return {
+    encryptedPrivateKey: arrayBufferToBase64(encrypted),
+    salt: arrayBufferToHex(salt),
+    iv: arrayBufferToHex(iv),
+  };
+}
+
+/**
+ * Decrypt private key with password-derived key for recovery
+ * @param {string} encryptedPrivateKey Base64-encoded encrypted private key
+ * @param {string} saltHex Hex-encoded salt
+ * @param {string} ivHex Hex-encoded IV
+ * @param {string} password User's password
+ * @returns {Promise<string>} Decrypted base64-encoded PEM private key
+ */
+export async function decryptPrivateKeyWithPassword(encryptedPrivateKey, saltHex, ivHex, password) {
+  // Convert hex to Uint8Array
+  const salt = hexToArrayBuffer(saltHex);
+  const iv = hexToArrayBuffer(ivHex);
+
+  // Derive key from password
+  const derivedKey = await deriveKeyFromPassword(password, new Uint8Array(salt));
+
+  // Decrypt private key
+  const decrypted = await window.crypto.subtle.decrypt(
+    {
+      name: 'AES-GCM',
+      iv: new Uint8Array(iv),
+    },
+    derivedKey,
+    base64ToArrayBuffer(encryptedPrivateKey)
+  );
+
+  return new TextDecoder().decode(decrypted);
+}
+
+/**
+ * Convert ArrayBuffer to hex string
+ */
+function arrayBufferToHex(buffer) {
+  return Array.from(new Uint8Array(buffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * Convert hex string to ArrayBuffer
+ */
+function hexToArrayBuffer(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
   }
   return bytes.buffer;
 }

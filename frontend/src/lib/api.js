@@ -49,6 +49,14 @@ export const api = {
       token,
       body: { content },
     }),
+  sendEncryptedMessage: (token, conversationId, encryptedData) =>
+    request(`/conversations/${conversationId}/messages`, {
+      method: "POST",
+      token,
+      body: { encrypted: true, ...encryptedData },
+    }),
+  getPublicKey: (token, userId) =>
+    request(`/keys/public/${userId}`, { token }),
   friends: (token) => request("/friends", { token }),
   friendRequests: (token) => request("/friends/requests", { token }),
   blockedFriends: (token) => request("/friends/blocked", { token }),
@@ -66,17 +74,29 @@ export const api = {
     request(`/friends/requests/${requesterId}/reject`, { method: "DELETE", token }),
   deleteFriend: (token, friendId) =>
     request(`/friends/${friendId}`, { method: "DELETE", token }),
-  rotatePublicKey: (token, publicKey) =>
+  rotatePublicKey: (token, publicKey, encryptedPrivateKey = null, salt = null, iv = null) =>
     request("/keys/rotate", {
       method: "PUT",
       token,
-      body: { publicKey, algorithm: "ECC-SECP256R1" },
+      body: {
+        publicKey,
+        algorithm: "ECC-SECP256R1",
+        encryptedPrivateKey,
+        salt,
+        iv
+      },
     }),
-  registerPublicKey: (token, publicKey) =>
+  registerPublicKey: (token, publicKey, encryptedPrivateKey = null, salt = null, iv = null) =>
     request("/keys/register", {
       method: "POST",
       token,
-      body: { publicKey, algorithm: "ECC-SECP256R1" },
+      body: {
+        publicKey,
+        algorithm: "ECC-SECP256R1",
+        encryptedPrivateKey,
+        salt,
+        iv
+      },
     }),
   myPublicKey: (token) => request("/keys/my-key", { token }),
   userSettings: (token) => request("/settings", { token }),
