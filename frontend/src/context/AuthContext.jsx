@@ -8,6 +8,25 @@ import {
 
 const AuthContext = createContext(null);
 
+function normalizeUser(user) {
+  if (!user) {
+    return null;
+  }
+  const settings = typeof user.settings === "object" && user.settings !== null ? user.settings : {};
+  return {
+    ...user,
+    settings,
+  };
+}
+
+function persistUser(user) {
+  if (user) {
+    sessionStorage.setItem("user", JSON.stringify(user));
+  } else {
+    sessionStorage.removeItem("user");
+  }
+}
+
 function loadStoredValue(key) {
   const value = sessionStorage.getItem(key);
   if (!value) {
@@ -22,13 +41,23 @@ function loadStoredValue(key) {
 
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => loadStoredValue("accessToken"));
-  const [user, setUser] = useState(() => loadStoredValue("user"));
+  const [user, setUser] = useState(() => normalizeUser(loadStoredValue("user")));
 
   const login = useCallback((nextUser, accessToken) => {
-    setUser(nextUser);
+    const normalizedUser = normalizeUser(nextUser);
+    setUser(normalizedUser);
     setToken(accessToken);
-    sessionStorage.setItem("user", JSON.stringify(nextUser));
+    persistUser(normalizedUser);
     sessionStorage.setItem("accessToken", JSON.stringify(accessToken));
+  }, []);
+
+  const updateUser = useCallback((updater) => {
+    setUser((previous) => {
+      const nextValue = typeof updater === "function" ? updater(previous) : updater;
+      const normalized = normalizeUser(nextValue);
+      persistUser(normalized);
+      return normalized;
+    });
   }, []);
 
   const logout = useCallback(() => {
@@ -46,9 +75,10 @@ export function AuthProvider({ children }) {
       token,
       login,
       logout,
+      updateUser,
       isAuthenticated: Boolean(token && user),
     }),
-    [login, logout, token, user],
+    [login, logout, token, updateUser, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

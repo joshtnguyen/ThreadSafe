@@ -5,7 +5,14 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from ..database import db
 from ..models import Contact, User
-from ..websocket_helper import emit_friend_request, emit_friend_request_accepted, emit_friend_deleted, emit_friend_request_rejected
+from ..websocket_helper import (
+    emit_friend_request,
+    emit_friend_request_accepted,
+    emit_friend_deleted,
+    emit_friend_request_rejected,
+    emit_user_blocked,
+    emit_user_unblocked,
+)
 
 friends_bp = Blueprint("friends", __name__)
 
@@ -284,6 +291,10 @@ def block_user():
 
     db.session.commit()
 
+    blocker = User.query.get(current_user_id)
+    if blocker:
+        emit_user_blocked(target_user.userID, blocker.to_dict())
+
     return jsonify({
         "message": f"Blocked {target_user.username}.",
         "user": target_user.to_dict(),
@@ -319,7 +330,26 @@ def unblock_user():
 
     # Set status back to Accepted instead of deleting
     outgoing.contactStatus = "Accepted"
+
+    reverse = Contact.query.filter_by(
+        userID=target_user.userID,
+        contact_userID=current_user_id,
+    ).first()
+    if reverse:
+        reverse.contactStatus = "Accepted"
+    else:
+        reverse = Contact(
+            userID=target_user.userID,
+            contact_userID=current_user_id,
+            contactStatus="Accepted",
+        )
+        db.session.add(reverse)
+
     db.session.commit()
+
+    unblocker = User.query.get(current_user_id)
+    if unblocker:
+        emit_user_unblocked(target_user.userID, unblocker.to_dict())
 
     return jsonify({
         "message": f"Unblocked {target_user.username}.",

@@ -15,6 +15,8 @@ export function WebSocketProvider({ children }) {
   const friendAcceptHandlersRef = useRef([]);
   const friendDeleteHandlersRef = useRef([]);
   const friendRejectHandlersRef = useRef([]);
+  const blockedHandlersRef = useRef([]);
+  const unblockedHandlersRef = useRef([]);
 
   useEffect(() => {
     // Only connect if user is logged in
@@ -90,6 +92,18 @@ export function WebSocketProvider({ children }) {
       }
     });
 
+    newSocket.on("user_blocked_event", (data) => {
+      if (data?.blocker) {
+        blockedHandlersRef.current.forEach((handler) => handler(data.blocker));
+      }
+    });
+
+    newSocket.on("user_unblocked_event", (data) => {
+      if (data?.unblocker) {
+        unblockedHandlersRef.current.forEach((handler) => handler(data.unblocker));
+      }
+    });
+
     setSocket(newSocket);
 
     return () => {
@@ -137,6 +151,20 @@ export function WebSocketProvider({ children }) {
     };
   };
 
+  const onUserBlocked = (handler) => {
+    blockedHandlersRef.current = [...blockedHandlersRef.current, handler];
+    return () => {
+      blockedHandlersRef.current = blockedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onUserUnblocked = (handler) => {
+    unblockedHandlersRef.current = [...unblockedHandlersRef.current, handler];
+    return () => {
+      unblockedHandlersRef.current = unblockedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
   const value = {
     socket,
     isConnected,
@@ -145,6 +173,8 @@ export function WebSocketProvider({ children }) {
     onFriendRequestAccepted,
     onFriendDeleted,
     onFriendRequestRejected,
+    onUserBlocked,
+    onUserUnblocked,
   };
 
   return (

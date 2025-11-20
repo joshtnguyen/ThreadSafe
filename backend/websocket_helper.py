@@ -46,3 +46,13 @@ def emit_friend_deleted(friend_id: int, deleter_data: dict):
 def emit_friend_request_rejected(requester_id: int, rejector_data: dict):
     """Emit a friend request rejection notification."""
     _post("/relay/friend-rejected", {"requesterId": requester_id, "rejector": rejector_data})
+
+
+def emit_user_blocked(blocked_user_id: int, blocker_data: dict):
+    """Emit a notification that blocked_user_id was blocked by blocker_data."""
+    _post("/relay/user-blocked", {"blockedUserId": blocked_user_id, "blocker": blocker_data})
+
+
+def emit_user_unblocked(unblocked_user_id: int, unblocker_data: dict):
+    """Emit a notification that unblocked_user_id was unblocked."""
+    _post("/relay/user-unblocked", {"unblockedUserId": unblocked_user_id, "unblocker": unblocker_data})

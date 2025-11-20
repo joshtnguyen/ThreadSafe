@@ -79,4 +79,7 @@ export const api = {
       body: { publicKey, algorithm: "ECC-SECP256R1" },
     }),
   myPublicKey: (token) => request("/keys/my-key", { token }),
+  userSettings: (token) => request("/settings", { token }),
+  updateSettings: (token, data) =>
+    request("/settings", { method: "PUT", token, body: data }),
 };

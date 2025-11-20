@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -13,9 +13,27 @@ from ..encryption.message_crypto import encrypt_message_for_user
 
 conversations_bp = Blueprint("conversations", __name__)
 
+DEFAULT_MESSAGE_RETENTION_HOURS = 72
+MIN_MESSAGE_RETENTION_HOURS = 1
+MAX_MESSAGE_RETENTION_HOURS = 24 * 14
+
 
 def _current_user_id() -> int:
     return int(get_jwt_identity())
+
+
+def _message_expiry_for_user(user: User | None) -> datetime:
+    """Calculate an expiry timestamp for a sender using their settings."""
+    hours = DEFAULT_MESSAGE_RETENTION_HOURS
+    if user and isinstance(user.settings, dict):
+        try:
+            custom_hours = int(user.settings.get("messageRetentionHours", hours))
+            hours = custom_hours
+        except (TypeError, ValueError):
+            pass
+
+    hours = max(MIN_MESSAGE_RETENTION_HOURS, min(MAX_MESSAGE_RETENTION_HOURS, hours))
+    return datetime.utcnow() + timedelta(hours=hours)
 
 
 @conversations_bp.get("")
@@ -23,6 +41,7 @@ def _current_user_id() -> int:
 def list_conversations():
     """Return conversations (unique contacts with messages) for the authenticated user."""
     current_user_id = _current_user_id()
+    cutoff = datetime.utcnow()
 
     # Get all users the current user has exchanged messages with
     sent_to = db.session.query(Message.receiverID).filter(
@@ -49,13 +68,18 @@ def list_conversations():
         if not contact_user:
             continue
 
-        # Get last message between these two users
-        last_message = Message.query.filter(
-            or_(
-                and_(Message.senderID == current_user_id, Message.receiverID == contact_id),
-                and_(Message.senderID == contact_id, Message.receiverID == current_user_id)
+        # Get last non-expired message between these two users
+        last_message = (
+            Message.query.filter(
+                or_(
+                    and_(Message.senderID == current_user_id, Message.receiverID == contact_id),
+                    and_(Message.senderID == contact_id, Message.receiverID == current_user_id),
+                ),
+                Message.expiryTime > cutoff,
             )
-        ).order_by(Message.timeStamp.desc()).first()
+            .order_by(Message.timeStamp.desc())
+            .first()
+        )
 
         conversations.append({
             "id": contact_id,  # Using contact's userID as conversation ID
@@ -113,12 +137,18 @@ def create_conversation():
         )
 
     # Get last message if exists
-    last_message = Message.query.filter(
-        or_(
-            and_(Message.senderID == current_user_id, Message.receiverID == target_user.userID),
-            and_(Message.senderID == target_user.userID, Message.receiverID == current_user_id)
+    cutoff = datetime.utcnow()
+    last_message = (
+        Message.query.filter(
+            or_(
+                and_(Message.senderID == current_user_id, Message.receiverID == target_user.userID),
+                and_(Message.senderID == target_user.userID, Message.receiverID == current_user_id),
+            ),
+            Message.expiryTime > cutoff,
         )
-    ).order_by(Message.timeStamp.desc()).first()
+        .order_by(Message.timeStamp.desc())
+        .first()
+    )
 
     conversation = {
         "id": target_user.userID,
@@ -152,12 +182,18 @@ def get_conversation(conversation_id: int):
         return jsonify({"message": "Contact not found."}), 404
 
     # Get last message
-    last_message = Message.query.filter(
-        or_(
-            and_(Message.senderID == current_user_id, Message.receiverID == conversation_id),
-            and_(Message.senderID == conversation_id, Message.receiverID == current_user_id)
+    cutoff = datetime.utcnow()
+    last_message = (
+        Message.query.filter(
+            or_(
+                and_(Message.senderID == current_user_id, Message.receiverID == conversation_id),
+                and_(Message.senderID == conversation_id, Message.receiverID == current_user_id),
+            ),
+            Message.expiryTime > cutoff,
         )
-    ).order_by(Message.timeStamp.desc()).first()
+        .order_by(Message.timeStamp.desc())
+        .first()
+    )
 
     conversation = {
         "id": contact_user.userID,
@@ -181,13 +217,18 @@ def get_messages(conversation_id: int):
     if not contact_user:
         return jsonify({"message": "User not found."}), 404
 
-    # Get all messages between these two users (regardless of contact status - chat history preserved)
-    messages = Message.query.filter(
-        or_(
-            and_(Message.senderID == current_user_id, Message.receiverID == conversation_id),
-            and_(Message.senderID == conversation_id, Message.receiverID == current_user_id)
+    # Get all non-expired messages between these two users (regardless of contact status - chat history preserved)
+    messages = (
+        Message.query.filter(
+            or_(
+                and_(Message.senderID == current_user_id, Message.receiverID == conversation_id),
+                and_(Message.senderID == conversation_id, Message.receiverID == current_user_id),
+            ),
+            Message.expiryTime > datetime.utcnow(),
         )
-    ).order_by(Message.timeStamp.asc()).all()
+        .order_by(Message.timeStamp.asc())
+        .all()
+    )
 
     # If no messages exist, return empty list (not an error - they can view old chats)
     if not messages:
@@ -221,6 +262,10 @@ def create_message(conversation_id: int):
     # Verify the receiver exists and is a contact
     receiver = User.query.get(conversation_id)
     if not receiver:
+        return jsonify({"message": "User not found."}), 404
+
+    sender = User.query.get(current_user_id)
+    if not sender:
         return jsonify({"message": "User not found."}), 404
 
     # Check if sender's contact to receiver is accepted
@@ -286,7 +331,7 @@ def create_message(conversation_id: int):
         sender_ephemeral_public_key=sender_encrypted['ephemeral_public_key'],
         status="Sent",
         msg_Type="text",
-        expiryTime=Message.default_expiry_time(is_group=False),
+        expiryTime=_message_expiry_for_user(sender),
     )
 
     db.session.add(message)

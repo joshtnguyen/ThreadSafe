@@ -194,6 +194,32 @@ def relay_friend_rejected_http():
     return jsonify({'status': 'ok'}), 200
 
 
+@app.post('/relay/user-blocked')
+def relay_user_blocked_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    blocked_user_id = data.get('blockedUserId')
+    blocker_data = data.get('blocker')
+    if not blocked_user_id or not blocker_data:
+        return jsonify({'message': 'blockedUserId and blocker required'}), 400
+    print(f'Emitting user_blocked_event to user_{blocked_user_id} by {blocker_data.get("username", "unknown")}')
+    socketio.emit('user_blocked_event', {'blocker': blocker_data}, room=f'user_{blocked_user_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/user-unblocked')
+def relay_user_unblocked_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    unblocked_user_id = data.get('unblockedUserId')
+    unblocker_data = data.get('unblocker')
+    if not unblocked_user_id or not unblocker_data:
+        return jsonify({'message': 'unblockedUserId and unblocker required'}), 400
+    print(f'Emitting user_unblocked_event to user_{unblocked_user_id} by {unblocker_data.get("username", "unknown")}')
+    socketio.emit('user_unblocked_event', {'unblocker': unblocker_data}, room=f'user_{unblocked_user_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
 if __name__ == '__main__':
     print('Starting TLS Relay Server on port 5001...')
     socketio.run(app, host='0.0.0.0', port=5001, debug=True)
