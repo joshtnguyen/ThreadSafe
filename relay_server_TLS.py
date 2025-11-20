@@ -220,6 +220,36 @@ def relay_user_unblocked_http():
     return jsonify({'status': 'ok'}), 200
 
 
+@app.post('/relay/message-status')
+def relay_message_status_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    sender_id = data.get('senderId')
+    status_data = data.get('status')
+    if not sender_id or not status_data:
+        return jsonify({'message': 'senderId and status required'}), 400
+    print(f'Emitting message_status_update_event to user_{sender_id}: {status_data}')
+    socketio.emit('message_status_update_event', status_data, room=f'user_{sender_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/message-deleted')
+def relay_message_deleted_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    user_id = data.get('userId')
+    message_id = data.get('messageId')
+    conversation_id = data.get('conversationId')
+    if not user_id or not message_id or not conversation_id:
+        return jsonify({'message': 'userId, messageId, and conversationId required'}), 400
+    print(f'Emitting message_deleted_event to user_{user_id}: message {message_id}')
+    socketio.emit('message_deleted_event', {
+        'messageId': message_id,
+        'conversationId': conversation_id
+    }, room=f'user_{user_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
 if __name__ == '__main__':
     print('Starting TLS Relay Server on port 5001...')
     socketio.run(app, host='0.0.0.0', port=5001, debug=True)

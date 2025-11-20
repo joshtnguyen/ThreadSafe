@@ -48,6 +48,8 @@ export default function ChatPage() {
     onFriendRequestRejected,
     onUserBlocked,
     onUserUnblocked,
+    onMessageStatusUpdate,
+    onMessageDeleted,
   } = useWebSocket();
 
   const [conversations, setConversations] = useState([]);
@@ -278,6 +280,32 @@ export default function ChatPage() {
     };
   }, [selectedId, token]);
 
+  // Mark messages as "Read" when conversation is opened
+  useEffect(() => {
+    if (!selectedId || messages.length === 0) return;
+
+    async function markAsRead() {
+      // Find unread messages that we received (not our own)
+      const unreadMessages = messages.filter(
+        (msg) => !msg.isOwn && msg.status !== "Read"
+      );
+
+      for (const msg of unreadMessages) {
+        try {
+          await api.updateMessageStatus(token, selectedId, msg.id, "Read");
+          // Update local message status
+          setMessages((prev) =>
+            prev.map((m) => (m.id === msg.id ? { ...m, status: "Read" } : m))
+          );
+        } catch (error) {
+          console.error(`Failed to mark message ${msg.id} as read:`, error);
+        }
+      }
+    }
+
+    markAsRead();
+  }, [selectedId, messages.length, token]);
+
   // Decrypt messages when they load or private key becomes available
   useEffect(() => {
     if (!privateKey || messages.length === 0) {
@@ -355,6 +383,15 @@ export default function ChatPage() {
             ...prev,
             [message.id]: "[Decryption failed]",
           }));
+        }
+      }
+
+      // Mark message as "Delivered" if we're the receiver
+      if (!message.isOwn && message.status === "Sent") {
+        try {
+          await api.updateMessageStatus(token, message.senderID, message.id, "Delivered");
+        } catch (error) {
+          console.error("Failed to update message status to Delivered:", error);
         }
       }
 
@@ -489,6 +526,56 @@ export default function ChatPage() {
     return unsubscribe;
   }, [onFriendRequestRejected]);
 
+  // Listen for message status updates (delivered/read receipts)
+  useEffect(() => {
+    const unsubscribe = onMessageStatusUpdate((statusData) => {
+      const { messageId, status, conversationId } = statusData;
+
+      // Update message status in messages list
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === messageId ? { ...msg, status } : msg))
+      );
+
+      // Update status in conversation preview if it's the last message
+      setConversations((prev) =>
+        prev.map((conv) => {
+          if (conv.id === conversationId && conv.lastMessage?.id === messageId) {
+            return {
+              ...conv,
+              lastMessage: { ...conv.lastMessage, status },
+            };
+          }
+          return conv;
+        })
+      );
+    });
+    return unsubscribe;
+  }, [onMessageStatusUpdate]);
+
+  // Listen for message deletion events (real-time auto-delete)
+  useEffect(() => {
+    const unsubscribe = onMessageDeleted((deletionData) => {
+      const { messageId, conversationId } = deletionData;
+
+      console.log(`Message ${messageId} deleted for conversation ${conversationId}`);
+
+      // Remove message from messages list
+      setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
+
+      // Update conversation list - remove if it was last message
+      setConversations((prev) =>
+        prev.map((conv) => {
+          if (conv.id === conversationId && conv.lastMessage?.id === messageId) {
+            // This was the last message, we need to fetch new last message or set to null
+            return { ...conv, lastMessage: null };
+          }
+          return conv;
+        })
+      );
+    });
+    return unsubscribe;
+  }, [onMessageDeleted]);
+
   // Listen for block/unblock events targeting current user
   useEffect(() => {
     const unsubscribeBlocked = onUserBlocked((blocker) => {
@@ -526,6 +613,33 @@ export default function ChatPage() {
       unsubscribeUnblocked();
     };
   }, [onUserBlocked, onUserUnblocked, selectedId]);
+
+  const handleSaveMessage = async (messageId, currentSavedStatus) => {
+    if (!selectedId || !token) return;
+
+    const newSavedStatus = !currentSavedStatus;
+
+    try {
+      // Optimistically update UI
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId ? { ...msg, saved: newSavedStatus } : msg
+        )
+      );
+
+      // Call API
+      await api.saveMessage(token, selectedId, messageId, newSavedStatus);
+    } catch (error) {
+      console.error("Failed to save message:", error);
+      // Revert on error
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId ? { ...msg, saved: currentSavedStatus } : msg
+        )
+      );
+      setToast({ message: "Failed to save message.", tone: "error" });
+    }
+  };
 
   const handleSendMessage = async (event) => {
     event.preventDefault();
@@ -883,8 +997,10 @@ export default function ChatPage() {
     event?.preventDefault();
 
     const hours = Number(settingsForm.messageRetentionHours);
-    if (!Number.isInteger(hours) || hours < 1 || hours > 336) {
-      setSettingsError("Retention must be between 1 and 336 hours.");
+    const minHours = 15 / 3600; // 15 seconds
+    const maxHours = 72; // 72 hours (3 days)
+    if (isNaN(hours) || hours < minHours || hours > maxHours) {
+      setSettingsError("Retention must be between 0.004167 hours (15 seconds) and 72 hours (3 days).");
       return;
     }
 
@@ -1079,8 +1195,9 @@ export default function ChatPage() {
                 <span className="field-label">Auto-delete after (hours)</span>
                 <input
                   type="number"
-                  min="1"
-                  max="336"
+                  min="0.004167"
+                  max="72"
+                  step="0.000001"
                   value={settingsForm.messageRetentionHours}
                   onChange={(event) => {
                     setSettingsError("");
@@ -1090,7 +1207,7 @@ export default function ChatPage() {
                     }));
                   }}
                 />
-                <span className="field-note">Minimum 1 hour, maximum 14 days.</span>
+                <span className="field-note">Minimum 0.004167 hours (15 seconds), maximum 72 hours (3 days).</span>
               </label>
               <div className="field ghost">
                 <span className="field-label">Theme</span>
@@ -1498,16 +1615,42 @@ export default function ChatPage() {
                   const displayContent = decryptedMessages[message.id] ||
                     (privateKey ? "Decrypting..." : message.content);
 
+                  // Get status indicator for sent messages
+                  const getStatusIndicator = (status) => {
+                    if (status === "Read") return <span style={{ color: "#4a9eff" }}>Read</span>;
+                    if (status === "Delivered") return <span>Delivered</span>;
+                    return <span>Sent</span>;
+                  };
+
                   return (
                       <article
                         key={message.id}
-                        className={`message-bubble ${message.isOwn ? "own" : "their"}`}
+                        className={`message-bubble ${message.isOwn ? "own" : "their"} ${message.saved ? "saved" : ""}`}
                       >
-                        <span className="bubble-meta" title={message.isOwn ? "You" : message.sender.username}>
-                          {message.isOwn ? "You" : message.sender.username}
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span className="bubble-meta" title={message.isOwn ? "You" : message.sender.username}>
+                            {message.isOwn ? "You" : message.sender.username}
+                          </span>
+                          <button
+                            type="button"
+                            className="save-message-btn"
+                            onClick={() => handleSaveMessage(message.id, message.saved)}
+                            title={message.saved ? "Unsave message" : "Save message"}
+                            aria-label={message.saved ? "Unsave message" : "Save message"}
+                          >
+                            {message.saved ? "★" : "☆"}
+                          </button>
+                        </div>
                         <p className="bubble-text">{displayContent}</p>
-                        <time className="bubble-time">{formatTime(message.sentAt)}</time>
+                        <time className="bubble-time">
+                          {message.isOwn && (
+                            <>
+                              {getStatusIndicator(message.status)}
+                              <span style={{ marginLeft: '8px' }}>{formatTime(message.sentAt)}</span>
+                            </>
+                          )}
+                          {!message.isOwn && formatTime(message.sentAt)}
+                        </time>
                       </article>
                     );
                 })

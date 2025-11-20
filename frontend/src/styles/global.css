@@ -942,6 +942,7 @@ input {
 
 .message-bubble {
   max-width: 62%;
+  min-width: 120px;
   padding: 6px;
   padding-left: 10px;
   border-radius: 15px;
@@ -989,6 +990,39 @@ input {
 
 .message-bubble.own .bubble-time {
   color: rgba(0, 0, 0, 0.55);
+}
+
+.save-message-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 0;
+  color: rgba(255, 255, 255, 0.4);
+  transition: color 0.2s ease;
+  line-height: 1;
+}
+
+.save-message-btn:hover {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.message-bubble.own .save-message-btn {
+  color: rgba(0, 0, 0, 0.4);
+}
+
+.message-bubble.own .save-message-btn:hover {
+  color: rgba(0, 0, 0, 0.7);
+}
+
+.message-bubble.saved {
+  border: 2px solid rgba(255, 215, 0, 0.5);
+  background: rgba(255, 215, 0, 0.08);
+}
+
+.message-bubble.own.saved {
+  border: 2px solid rgba(255, 215, 0, 0.7);
+  background: rgba(255, 215, 0, 0.15);
 }
 
 .composer {

@@ -13,9 +13,9 @@ from ..encryption.message_crypto import encrypt_message_for_user
 
 conversations_bp = Blueprint("conversations", __name__)
 
-DEFAULT_MESSAGE_RETENTION_HOURS = 72
-MIN_MESSAGE_RETENTION_HOURS = 1
-MAX_MESSAGE_RETENTION_HOURS = 24 * 14
+DEFAULT_MESSAGE_RETENTION_HOURS = 24  # 24 hours default
+MIN_MESSAGE_RETENTION_HOURS = 15 / 3600  # 15 seconds
+MAX_MESSAGE_RETENTION_HOURS = 72  # 72 hours (3 days)
 
 
 def _current_user_id() -> int:
@@ -23,17 +23,16 @@ def _current_user_id() -> int:
 
 
 def _message_expiry_for_user(user: User | None) -> datetime:
-    """Calculate an expiry timestamp for a sender using their settings."""
-    hours = DEFAULT_MESSAGE_RETENTION_HOURS
-    if user and isinstance(user.settings, dict):
-        try:
-            custom_hours = int(user.settings.get("messageRetentionHours", hours))
-            hours = custom_hours
-        except (TypeError, ValueError):
-            pass
+    """
+    Calculate an expiry timestamp for messages.
 
-    hours = max(MIN_MESSAGE_RETENTION_HOURS, min(MAX_MESSAGE_RETENTION_HOURS, hours))
-    return datetime.utcnow() + timedelta(hours=hours)
+    With hybrid deletion, this is set to 24 hours (the fallback time).
+    Actual per-user deletion is handled by the cleanup manager based on
+    read status and individual retention settings.
+    """
+    # Always use 24 hours - the fallback time for unread messages
+    # The cleanup manager handles per-user deletion based on their settings
+    return datetime.utcnow() + timedelta(hours=24)
 
 
 @conversations_bp.get("")
@@ -43,14 +42,16 @@ def list_conversations():
     current_user_id = _current_user_id()
     cutoff = datetime.utcnow()
 
-    # Get all users the current user has exchanged messages with
+    # Get all users the current user has exchanged messages with (excluding soft-deleted)
     sent_to = db.session.query(Message.receiverID).filter(
         Message.senderID == current_user_id,
-        Message.receiverID.isnot(None)
+        Message.receiverID.isnot(None),
+        Message.deleted_for_sender == False
     ).distinct()
 
     received_from = db.session.query(Message.senderID).filter(
-        Message.receiverID == current_user_id
+        Message.receiverID == current_user_id,
+        Message.deleted_for_receiver == False
     ).distinct()
 
     # Combine both sets
@@ -68,12 +69,20 @@ def list_conversations():
         if not contact_user:
             continue
 
-        # Get last non-expired message between these two users
+        # Get last non-expired, non-deleted message between these two users
         last_message = (
             Message.query.filter(
                 or_(
-                    and_(Message.senderID == current_user_id, Message.receiverID == contact_id),
-                    and_(Message.senderID == contact_id, Message.receiverID == current_user_id),
+                    and_(
+                        Message.senderID == current_user_id,
+                        Message.receiverID == contact_id,
+                        Message.deleted_for_sender == False
+                    ),
+                    and_(
+                        Message.senderID == contact_id,
+                        Message.receiverID == current_user_id,
+                        Message.deleted_for_receiver == False
+                    ),
                 ),
                 Message.expiryTime > cutoff,
             )
@@ -136,13 +145,21 @@ def create_conversation():
             403,
         )
 
-    # Get last message if exists
+    # Get last non-deleted message if exists
     cutoff = datetime.utcnow()
     last_message = (
         Message.query.filter(
             or_(
-                and_(Message.senderID == current_user_id, Message.receiverID == target_user.userID),
-                and_(Message.senderID == target_user.userID, Message.receiverID == current_user_id),
+                and_(
+                    Message.senderID == current_user_id,
+                    Message.receiverID == target_user.userID,
+                    Message.deleted_for_sender == False
+                ),
+                and_(
+                    Message.senderID == target_user.userID,
+                    Message.receiverID == current_user_id,
+                    Message.deleted_for_receiver == False
+                ),
             ),
             Message.expiryTime > cutoff,
         )
@@ -217,18 +234,47 @@ def get_messages(conversation_id: int):
     if not contact_user:
         return jsonify({"message": "User not found."}), 404
 
-    # Get all non-expired messages between these two users (regardless of contact status - chat history preserved)
+    # Get all non-expired, non-deleted messages between these two users
+    # Filter out messages soft-deleted for the current user
+
+    # Debug: Check ALL messages first
+    all_messages_debug = Message.query.filter(
+        or_(
+            and_(Message.senderID == current_user_id, Message.receiverID == conversation_id),
+            and_(Message.senderID == conversation_id, Message.receiverID == current_user_id),
+        )
+    ).all()
+
+    print(f"\n=== DEBUG get_messages for user {current_user_id} with {conversation_id} ===")
+    for msg in all_messages_debug:
+        print(f"  Message {msg.msgID}: sender={msg.senderID}, receiver={msg.receiverID}")
+        print(f"    deleted_for_sender={msg.deleted_for_sender}, deleted_for_receiver={msg.deleted_for_receiver}")
+        print(f"    expiryTime={msg.expiryTime}, now={datetime.utcnow()}, expired={msg.expiryTime <= datetime.utcnow()}")
+
     messages = (
         Message.query.filter(
             or_(
-                and_(Message.senderID == current_user_id, Message.receiverID == conversation_id),
-                and_(Message.senderID == conversation_id, Message.receiverID == current_user_id),
+                # Messages sent by current user (not deleted for sender)
+                and_(
+                    Message.senderID == current_user_id,
+                    Message.receiverID == conversation_id,
+                    Message.deleted_for_sender == False
+                ),
+                # Messages received by current user (not deleted for receiver)
+                and_(
+                    Message.senderID == conversation_id,
+                    Message.receiverID == current_user_id,
+                    Message.deleted_for_receiver == False
+                ),
             ),
             Message.expiryTime > datetime.utcnow(),
         )
         .order_by(Message.timeStamp.asc())
         .all()
     )
+
+    print(f"  Filtered messages count: {len(messages)}")
+    print(f"=== END DEBUG ===\n")
 
     # If no messages exist, return empty list (not an error - they can view old chats)
     if not messages:
@@ -243,11 +289,19 @@ def get_messages(conversation_id: int):
     if contact:  # Only mark as read if still friends
         unread = [
             msg for msg in messages
-            if msg.senderID == conversation_id and msg.status == "Sent"
+            if msg.senderID == conversation_id and msg.status != "Read"
         ]
         if unread:
+            from ..websocket_helper import emit_message_status_update
             for msg in unread:
                 msg.status = "Read"
+                msg.read_by_receiver_at = datetime.utcnow()
+                # Notify sender via WebSocket
+                emit_message_status_update(msg.senderID, {
+                    "messageId": msg.msgID,
+                    "status": "Read",
+                    "conversationId": current_user_id,
+                })
             db.session.commit()
 
     return jsonify({"messages": [msg.to_dict(current_user_id) for msg in messages]}), 200
@@ -324,6 +378,7 @@ def create_message(conversation_id: int):
             status="Sent",
             msg_Type="text",
             expiryTime=_message_expiry_for_user(sender),
+            read_by_sender_at=datetime.utcnow(),  # Sender reads immediately when sending
         )
     else:
         # Server-side encryption (legacy support)
@@ -374,6 +429,7 @@ def create_message(conversation_id: int):
             status="Sent",
             msg_Type="text",
             expiryTime=_message_expiry_for_user(sender),
+            read_by_sender_at=datetime.utcnow(),  # Sender reads immediately when sending
         )
 
     db.session.add(message)
@@ -384,3 +440,79 @@ def create_message(conversation_id: int):
 
     # Return message to sender
     return jsonify({"message": message.to_dict(current_user_id)}), 201
+
+
+@conversations_bp.patch("/<int:conversation_id>/messages/<int:message_id>/status")
+@jwt_required()
+def update_message_status(conversation_id: int, message_id: int):
+    """Update message status to 'Delivered' or 'Read'."""
+    current_user_id = _current_user_id()
+    payload = request.get_json(silent=True) or {}
+    new_status = payload.get("status", "").strip()
+
+    if new_status not in ["Delivered", "Read"]:
+        return jsonify({"message": "Status must be 'Delivered' or 'Read'."}), 400
+
+    # Get the message
+    message = Message.query.get(message_id)
+    if not message:
+        return jsonify({"message": "Message not found."}), 404
+
+    # Only the receiver can update status
+    if message.receiverID != current_user_id:
+        return jsonify({"message": "Only the receiver can update message status."}), 403
+
+    # Update status (only allow progression: Sent -> Delivered -> Read)
+    if message.status == "Sent" and new_status == "Delivered":
+        message.status = "Delivered"
+    elif message.status in ["Sent", "Delivered"] and new_status == "Read":
+        message.status = "Read"
+        # Track when receiver read the message
+        message.read_by_receiver_at = datetime.utcnow()
+    else:
+        # Status already at or past requested status
+        return jsonify({"message": message.to_dict(current_user_id)}), 200
+
+    db.session.commit()
+
+    # Notify sender via WebSocket
+    from ..websocket_helper import emit_message_status_update
+    emit_message_status_update(message.senderID, {
+        "messageId": message_id,
+        "status": message.status,
+        "conversationId": conversation_id,
+    })
+
+    return jsonify({"message": message.to_dict(current_user_id)}), 200
+
+
+@conversations_bp.patch("/<int:conversation_id>/messages/<int:message_id>/save")
+@jwt_required()
+def toggle_save_message(conversation_id: int, message_id: int):
+    """
+    Toggle save status for a message.
+
+    Saved messages are exempt from auto-deletion and kept forever.
+    Users can save important messages they want to preserve.
+    """
+    current_user_id = _current_user_id()
+    payload = request.get_json(silent=True) or {}
+    saved = payload.get("saved", False)
+
+    # Get the message
+    message = Message.query.get(message_id)
+    if not message:
+        return jsonify({"message": "Message not found."}), 404
+
+    # Only sender or receiver can save a message
+    if message.senderID != current_user_id and message.receiverID != current_user_id:
+        return jsonify({"message": "You can only save your own messages."}), 403
+
+    # Update saved status
+    message.saved = bool(saved)
+    db.session.commit()
+
+    return jsonify({
+        "message": message.to_dict(current_user_id),
+        "saved": message.saved,
+    }), 200

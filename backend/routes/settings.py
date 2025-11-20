@@ -34,12 +34,14 @@ def _validate_settings(payload: dict) -> tuple[dict, list[str]]:
 
     if "messageRetentionHours" in payload:
         try:
-            hours = int(payload["messageRetentionHours"])
+            hours = float(payload["messageRetentionHours"])
         except (TypeError, ValueError):
-            errors.append("messageRetentionHours must be a whole number.")
+            errors.append("messageRetentionHours must be a number.")
         else:
-            if not 1 <= hours <= 24 * 14:
-                errors.append("messageRetentionHours must be between 1 and 336 hours.")
+            min_hours = 15 / 3600  # 15 seconds in hours (0.004167)
+            max_hours = 72  # 72 hours (3 days)
+            if not min_hours <= hours <= max_hours:
+                errors.append(f"messageRetentionHours must be between {min_hours:.6f} and {max_hours} hours.")
             else:
                 updates["messageRetentionHours"] = hours
 

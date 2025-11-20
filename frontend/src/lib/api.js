@@ -102,4 +102,16 @@ export const api = {
   userSettings: (token) => request("/settings", { token }),
   updateSettings: (token, data) =>
     request("/settings", { method: "PUT", token, body: data }),
+  updateMessageStatus: (token, conversationId, messageId, status) =>
+    request(`/conversations/${conversationId}/messages/${messageId}/status`, {
+      method: "PATCH",
+      token,
+      body: { status },
+    }),
+  saveMessage: (token, conversationId, messageId, saved) =>
+    request(`/conversations/${conversationId}/messages/${messageId}/save`, {
+      method: "PATCH",
+      token,
+      body: { saved },
+    }),
 };

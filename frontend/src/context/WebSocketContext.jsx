@@ -17,6 +17,8 @@ export function WebSocketProvider({ children }) {
   const friendRejectHandlersRef = useRef([]);
   const blockedHandlersRef = useRef([]);
   const unblockedHandlersRef = useRef([]);
+  const messageStatusHandlersRef = useRef([]);
+  const messageDeletedHandlersRef = useRef([]);
 
   useEffect(() => {
     // Only connect if user is logged in
@@ -104,6 +106,15 @@ export function WebSocketProvider({ children }) {
       }
     });
 
+    newSocket.on("message_status_update_event", (data) => {
+      messageStatusHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("message_deleted_event", (data) => {
+      console.log("Message deleted event received:", data);
+      messageDeletedHandlersRef.current.forEach((handler) => handler(data));
+    });
+
     setSocket(newSocket);
 
     return () => {
@@ -165,6 +176,20 @@ export function WebSocketProvider({ children }) {
     };
   };
 
+  const onMessageStatusUpdate = (handler) => {
+    messageStatusHandlersRef.current = [...messageStatusHandlersRef.current, handler];
+    return () => {
+      messageStatusHandlersRef.current = messageStatusHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onMessageDeleted = (handler) => {
+    messageDeletedHandlersRef.current = [...messageDeletedHandlersRef.current, handler];
+    return () => {
+      messageDeletedHandlersRef.current = messageDeletedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
   const value = {
     socket,
     isConnected,
@@ -175,6 +200,8 @@ export function WebSocketProvider({ children }) {
     onFriendRequestRejected,
     onUserBlocked,
     onUserUnblocked,
+    onMessageStatusUpdate,
+    onMessageDeleted,
   };
 
   return (

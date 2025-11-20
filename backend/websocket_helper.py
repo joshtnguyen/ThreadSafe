@@ -56,3 +56,17 @@ def emit_user_blocked(blocked_user_id: int, blocker_data: dict):
 def emit_user_unblocked(unblocked_user_id: int, unblocker_data: dict):
     """Emit a notification that unblocked_user_id was unblocked."""
     _post("/relay/user-unblocked", {"unblockedUserId": unblocked_user_id, "unblocker": unblocker_data})
+
+
+def emit_message_status_update(sender_id: int, status_data: dict):
+    """Emit a message status update (delivered/read) to the sender."""
+    _post("/relay/message-status", {"senderId": sender_id, "status": status_data})
+
+
+def emit_message_deleted(user_id: int, message_id: int, conversation_id: int):
+    """Emit a message deletion notification to a user (message expired and deleted)."""
+    _post("/relay/message-deleted", {
+        "userId": user_id,
+        "messageId": message_id,
+        "conversationId": conversation_id
+    })

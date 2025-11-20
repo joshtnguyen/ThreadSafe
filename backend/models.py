@@ -367,6 +367,15 @@ class Message(db.Model):
     timeStamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     expiryTime = db.Column(db.DateTime, nullable=False, index=True)
 
+    # Read tracking and save feature
+    read_by_sender_at = db.Column(db.DateTime, nullable=True, index=True)
+    read_by_receiver_at = db.Column(db.DateTime, nullable=True, index=True)
+    saved = db.Column(db.Boolean, default=False, nullable=False, index=True)
+
+    # Per-user soft delete (each user controls when message disappears for them)
+    deleted_for_sender = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    deleted_for_receiver = db.Column(db.Boolean, default=False, nullable=False, index=True)
+
     # Relationships
     sender = db.relationship("User", foreign_keys=[senderID], back_populates="sent_messages")
     receiver = db.relationship(
@@ -396,6 +405,9 @@ class Message(db.Model):
             "isExpired": self.is_expired(),
             "sender": self.sender.to_dict() if self.sender else None,
             "isOwn": is_sender,
+            "saved": self.saved,
+            "readBySenderAt": self.read_by_sender_at.isoformat() if self.read_by_sender_at else None,
+            "readByReceiverAt": self.read_by_receiver_at.isoformat() if self.read_by_receiver_at else None,
         }
 
         # If user is the sender, return sender's encrypted copy

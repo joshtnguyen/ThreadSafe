@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from flask import Flask
 
+from .admin import admin_bp
 from .auth import auth_bp
 from .contacts import friends_bp
 from .conversations import conversations_bp
@@ -16,6 +17,7 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(conversations_bp, url_prefix="/api/conversations")
     app.register_blueprint(keys_bp, url_prefix="/api/keys")
     app.register_blueprint(settings_bp, url_prefix="/api/settings")
+    app.register_blueprint(admin_bp, url_prefix="/api/admin")
 
 
 __all__ = ["register_blueprints"]
