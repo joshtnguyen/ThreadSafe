@@ -895,6 +895,8 @@ input {
   gap: 14px;
   text-align: left;
   color: inherit;
+  width: 100%;
+  min-width: 0;
 }
 
 .conversation-item.active {

@@ -41,6 +41,8 @@ export const api = {
   conversationById: (token, id) => request(`/conversations/${id}`, { token }),
   createConversation: (token, data) =>
     request("/conversations", { method: "POST", token, body: data }),
+  deleteConversation: (token, conversationId) =>
+    request(`/conversations/${conversationId}`, { method: "DELETE", token }),
   messages: (token, conversationId) =>
     request(`/conversations/${conversationId}/messages`, { token }),
   sendMessage: (token, conversationId, content) =>

@@ -223,6 +223,42 @@ def get_conversation(conversation_id: int):
     return jsonify({"conversation": conversation}), 200
 
 
+@conversations_bp.delete("/<int:conversation_id>")
+@jwt_required()
+def delete_conversation(conversation_id: int):
+    """
+    Delete a conversation by deleting all messages between current user and the other user.
+
+    This permanently removes all messages (both sent and received) in the conversation.
+    conversation_id is the other user's ID.
+    """
+    current_user_id = _current_user_id()
+
+    # Verify the other user exists
+    contact_user = User.query.get(conversation_id)
+    if not contact_user:
+        return jsonify({"message": "User not found."}), 404
+
+    # Find all messages between these two users
+    messages = Message.query.filter(
+        or_(
+            and_(Message.senderID == current_user_id, Message.receiverID == conversation_id),
+            and_(Message.senderID == conversation_id, Message.receiverID == current_user_id),
+        )
+    ).all()
+
+    # Delete all messages
+    for message in messages:
+        db.session.delete(message)
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Conversation deleted successfully.",
+        "deletedCount": len(messages),
+    }), 200
+
+
 @conversations_bp.get("/<int:conversation_id>/messages")
 @jwt_required()
 def get_messages(conversation_id: int):

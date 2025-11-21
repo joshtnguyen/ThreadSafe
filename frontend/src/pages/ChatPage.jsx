@@ -56,6 +56,8 @@ export default function ChatPage() {
   const [friends, setFriends] = useState([]);
   const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
   const [selectedId, setSelectedId] = useState(null);
+  const [conversationMenuOpen, setConversationMenuOpen] = useState(null); // Track which conversation's menu is open
+  const [conversationMenuPosition, setConversationMenuPosition] = useState({ x: 0, y: 0 });
   const [messages, setMessages] = useState([]);
   const [messageDraft, setMessageDraft] = useState("");
   const [toast, setToast] = useState(null);
@@ -363,6 +365,9 @@ export default function ChatPage() {
       if (friendMenuOpen !== null) {
         setFriendMenuOpen(null);
       }
+      if (conversationMenuOpen !== null) {
+        setConversationMenuOpen(null);
+      }
       if (
         isFriendDropdownOpen &&
         friendDropdownRef.current &&
@@ -375,7 +380,7 @@ export default function ChatPage() {
     };
     document.addEventListener("click", handleDocumentClick);
     return () => document.removeEventListener("click", handleDocumentClick);
-  }, [friendMenuOpen, isFriendDropdownOpen]);
+  }, [friendMenuOpen, conversationMenuOpen, isFriendDropdownOpen]);
 
   // Listen for real-time incoming messages
   useEffect(() => {
@@ -1089,6 +1094,25 @@ export default function ChatPage() {
     }
   };
 
+  const handleDeleteConversation = async (conversationId) => {
+    try {
+      await api.deleteConversation(token, conversationId);
+
+      // Remove conversation from list
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+
+      // If the deleted conversation was the active one, clear the chat panel
+      if (selectedId === conversationId) {
+        setSelectedId(null);
+        setMessages([]);
+      }
+
+      setToast({ message: "✓ Conversation deleted.", tone: "success" });
+    } catch (error) {
+      setToast({ message: `Failed to delete conversation: ${error.message}`, tone: "error" });
+    }
+  };
+
   const relationshipLabels = {
     friends: "You're friends",
     pending_outgoing: "Request sent",
@@ -1777,25 +1801,103 @@ export default function ChatPage() {
                   ? (decryptedMessages[lastMsg.id] || lastMsg.content || "Encrypted message")
                   : "No messages yet.";
                   return (
-                    <button
+                    <div
                       key={conversation.id}
-                      type="button"
-                      className={`conversation-item ${
-                        conversation.id === selectedId ? "active" : ""
-                      }`}
-                      onClick={() => setSelectedId(conversation.id)}
+                      style={{ position: "relative", width: "100%" }}
                     >
-                      <div className="conversation-avatar">
-                        {conversation.name?.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="conversation-copy">
-                        <span className="conversation-name" title={conversation.name}>{conversation.name}</span>
-                        <span className="conversation-preview">{preview}</span>
-                      </div>
-                      <span className="conversation-chevron" aria-hidden>
-                        ›
-                      </span>
-                    </button>
+                      <button
+                        type="button"
+                        className={`conversation-item ${
+                          conversation.id === selectedId ? "active" : ""
+                        }`}
+                        onClick={() => setSelectedId(conversation.id)}
+                        style={{ paddingRight: "40px" }}
+                      >
+                        <div className="conversation-avatar">
+                          {conversation.name?.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="conversation-copy">
+                          <span className="conversation-name" title={conversation.name}>{conversation.name}</span>
+                          <span className="conversation-preview">{preview}</span>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setConversationMenuPosition({
+                            x: rect.right + 12,
+                            y: rect.top + rect.height / 2,
+                          });
+                          setConversationMenuOpen(conversationMenuOpen === conversation.id ? null : conversation.id);
+                        }}
+                        style={{
+                          position: "absolute",
+                          right: "8px",
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: "18px",
+                          padding: "4px 8px",
+                          color: "var(--text-muted)",
+                        }}
+                      >
+                        ⋮
+                      </button>
+                      {conversationMenuOpen === conversation.id && (
+                        <div
+                          style={{
+                            position: "fixed",
+                            left: `${conversationMenuPosition.x}px`,
+                            top: `${conversationMenuPosition.y}px`,
+                            transform: "translateY(-50%)",
+                            backgroundColor: "white",
+                            border: "1px solid #ddd",
+                            borderRadius: "6px",
+                            boxShadow: "0 12px 30px rgba(0,0,0,0.22)",
+                            zIndex: 4000,
+                            minWidth: "170px",
+                            padding: "6px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "6px",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  `Delete conversation with ${conversation.name}? All messages will be permanently removed.`
+                                )
+                              ) {
+                                setConversationMenuOpen(null);
+                                handleDeleteConversation(conversation.id);
+                              }
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "10px 12px",
+                              border: "none",
+                              background: "#fff1f1",
+                              textAlign: "left",
+                              cursor: "pointer",
+                              color: "#d32f2f",
+                              borderRadius: "4px",
+                              fontWeight: 600,
+                              transition: "background-color 0.15s ease",
+                            }}
+                            onMouseEnter={(e) => (e.target.style.backgroundColor = "#ffe1e1")}
+                            onMouseLeave={(e) => (e.target.style.backgroundColor = "#fff1f1")}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   );
                 })
               )}
