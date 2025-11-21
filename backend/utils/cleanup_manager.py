@@ -29,24 +29,19 @@ def cleanup_expired_messages() -> dict:
 
     # Smart query: Only check messages that could actually expire
     # Skip messages that are:
-    # 1. Already saved (never delete)
-    # 2. Already deleted for both parties (nothing to do)
+    # 1. Already deleted for both parties (nothing to do)
+    # Note: We check per-user saved status later in the loop
     messages_to_check = Message.query.filter(
-        Message.saved == False,
         or_(
             Message.deleted_for_sender == False,
             Message.deleted_for_receiver == False
         )
     ).all()
 
-    print(f"Smart query: Checking {len(messages_to_check)} messages (skipped saved and fully-deleted messages)")
+    print(f"Smart query: Checking {len(messages_to_check)} messages (skipped fully-deleted messages)")
 
     for message in messages_to_check:
         modified = False
-
-        # Skip if saved (never delete saved messages)
-        if message.saved:
-            continue
 
         # Get sender and receiver
         sender = User.query.get(message.senderID)
@@ -70,41 +65,49 @@ def cleanup_expired_messages() -> dict:
 
             # Check sender's deletion time
             if not message.deleted_for_sender:
-                # Use the later of: both_read_time OR settings_updated_at (if settings were changed after reading)
-                sender_start_time = both_read_time
-                if sender.settings_updated_at and sender.settings_updated_at > both_read_time:
-                    sender_start_time = sender.settings_updated_at
-                    print(f"    Sender changed settings at {sender.settings_updated_at}, using as start time")
+                # Skip deletion if sender has saved this message
+                if message.saved_by_sender:
+                    print(f"    Sender has saved this message - skipping deletion for sender")
+                else:
+                    # Use the later of: both_read_time OR settings_updated_at (if settings were changed after reading)
+                    sender_start_time = both_read_time
+                    if sender.settings_updated_at and sender.settings_updated_at > both_read_time:
+                        sender_start_time = sender.settings_updated_at
+                        print(f"    Sender changed settings at {sender.settings_updated_at}, using as start time")
 
-                sender_deletion_time = sender_start_time + timedelta(hours=sender_retention_hours)
-                time_until_sender_delete = (sender_deletion_time - now).total_seconds()
-                print(f"    Sender deletion in {time_until_sender_delete:.1f}s (start time: {sender_start_time})")
-                if now >= sender_deletion_time:
-                    print(f"    -> Deleting for SENDER {sender.username}")
-                    message.deleted_for_sender = True
-                    modified = True
-                    soft_deleted_count += 1
-                    # Notify sender that message is deleted on their side
-                    emit_message_deleted(message.senderID, message.msgID, message.receiverID)
+                    sender_deletion_time = sender_start_time + timedelta(hours=sender_retention_hours)
+                    time_until_sender_delete = (sender_deletion_time - now).total_seconds()
+                    print(f"    Sender deletion in {time_until_sender_delete:.1f}s (start time: {sender_start_time})")
+                    if now >= sender_deletion_time:
+                        print(f"    -> Deleting for SENDER {sender.username}")
+                        message.deleted_for_sender = True
+                        modified = True
+                        soft_deleted_count += 1
+                        # Notify sender that message is deleted on their side
+                        emit_message_deleted(message.senderID, message.msgID, message.receiverID)
 
             # Check receiver's deletion time
             if not message.deleted_for_receiver:
-                # Use the later of: both_read_time OR settings_updated_at (if settings were changed after reading)
-                receiver_start_time = both_read_time
-                if receiver.settings_updated_at and receiver.settings_updated_at > both_read_time:
-                    receiver_start_time = receiver.settings_updated_at
-                    print(f"    Receiver changed settings at {receiver.settings_updated_at}, using as start time")
+                # Skip deletion if receiver has saved this message
+                if message.saved_by_receiver:
+                    print(f"    Receiver has saved this message - skipping deletion for receiver")
+                else:
+                    # Use the later of: both_read_time OR settings_updated_at (if settings were changed after reading)
+                    receiver_start_time = both_read_time
+                    if receiver.settings_updated_at and receiver.settings_updated_at > both_read_time:
+                        receiver_start_time = receiver.settings_updated_at
+                        print(f"    Receiver changed settings at {receiver.settings_updated_at}, using as start time")
 
-                receiver_deletion_time = receiver_start_time + timedelta(hours=receiver_retention_hours)
-                time_until_receiver_delete = (receiver_deletion_time - now).total_seconds()
-                print(f"    Receiver deletion in {time_until_receiver_delete:.1f}s (start time: {receiver_start_time})")
-                if now >= receiver_deletion_time:
-                    print(f"    -> Deleting for RECEIVER {receiver.username}")
-                    message.deleted_for_receiver = True
-                    modified = True
-                    soft_deleted_count += 1
-                    # Notify receiver that message is deleted on their side
-                    emit_message_deleted(message.receiverID, message.msgID, message.senderID)
+                    receiver_deletion_time = receiver_start_time + timedelta(hours=receiver_retention_hours)
+                    time_until_receiver_delete = (receiver_deletion_time - now).total_seconds()
+                    print(f"    Receiver deletion in {time_until_receiver_delete:.1f}s (start time: {receiver_start_time})")
+                    if now >= receiver_deletion_time:
+                        print(f"    -> Deleting for RECEIVER {receiver.username}")
+                        message.deleted_for_receiver = True
+                        modified = True
+                        soft_deleted_count += 1
+                        # Notify receiver that message is deleted on their side
+                        emit_message_deleted(message.receiverID, message.msgID, message.senderID)
         else:
             # Not read by both: Apply 24-hour fallback for both users
             fallback_deletion_time = message.timeStamp + timedelta(hours=24)

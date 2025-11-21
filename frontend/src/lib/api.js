@@ -114,4 +114,8 @@ export const api = {
       token,
       body: { saved },
     }),
+  // Backup management
+  getBackups: (token) => request("/backups", { token }),
+  deleteBackup: (token, messageId) =>
+    request(`/backups/${messageId}`, { method: "DELETE", token }),
 };

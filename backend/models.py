@@ -368,10 +368,11 @@ class Message(db.Model):
     timeStamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     expiryTime = db.Column(db.DateTime, nullable=False, index=True)
 
-    # Read tracking and save feature
+    # Read tracking and per-user save feature
     read_by_sender_at = db.Column(db.DateTime, nullable=True, index=True)
     read_by_receiver_at = db.Column(db.DateTime, nullable=True, index=True)
-    saved = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    saved_by_sender = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    saved_by_receiver = db.Column(db.Boolean, default=False, nullable=False, index=True)
 
     # Per-user soft delete (each user controls when message disappears for them)
     deleted_for_sender = db.Column(db.Boolean, default=False, nullable=False, index=True)
@@ -393,6 +394,9 @@ class Message(db.Model):
         # Return appropriate encrypted version based on who's requesting
         is_sender = self.senderID == current_user_id if current_user_id else False
 
+        # Determine if current user has saved this message
+        saved_by_current_user = self.saved_by_sender if is_sender else self.saved_by_receiver
+
         result = {
             "id": self.msgID,
             "senderID": self.senderID,
@@ -405,8 +409,9 @@ class Message(db.Model):
             "expiryTime": self.expiryTime.isoformat() if self.expiryTime else None,
             "isExpired": self.is_expired(),
             "sender": self.sender.to_dict() if self.sender else None,
+            "receiver": self.receiver.to_dict() if self.receiver else None,
             "isOwn": is_sender,
-            "saved": self.saved,
+            "saved": saved_by_current_user,  # Per-user saved status
             "readBySenderAt": self.read_by_sender_at.isoformat() if self.read_by_sender_at else None,
             "readByReceiverAt": self.read_by_receiver_at.isoformat() if self.read_by_receiver_at else None,
         }

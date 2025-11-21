@@ -76,6 +76,10 @@ export default function ChatPage() {
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [unblockingUsername, setUnblockingUsername] = useState("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+  const [backups, setBackups] = useState([]);
+  const [isLoadingBackups, setIsLoadingBackups] = useState(false);
+  const [backupError, setBackupError] = useState("");
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [settingsForm, setSettingsForm] = useState(() => ({
@@ -138,6 +142,13 @@ export default function ChatPage() {
       isMounted = false;
     };
   }, [setTheme, token, updateUser]);
+
+  // Load backups when modal opens
+  useEffect(() => {
+    if (isBackupModalOpen) {
+      loadBackups();
+    }
+  }, [isBackupModalOpen]);
 
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedId),
@@ -1031,6 +1042,53 @@ export default function ChatPage() {
     }
   };
 
+  const loadBackups = async () => {
+    setIsLoadingBackups(true);
+    setBackupError("");
+    try {
+      const response = await api.getBackups(token);
+
+      // Get private key for decryption
+      const privKey = await getPrivateKey(user.id);
+      if (!privKey) {
+        setBackupError("Private key not found. Cannot decrypt backups.");
+        setIsLoadingBackups(false);
+        return;
+      }
+
+      const importedPrivateKey = await importPrivateKey(privKey);
+
+      // Decrypt each backup message
+      const decryptedBackups = await Promise.all(
+        response.backups.map(async (backup) => {
+          try {
+            const decrypted = await decryptMessageComplete(backup, importedPrivateKey);
+            return { ...backup, decryptedContent: decrypted };
+          } catch (error) {
+            console.error("Failed to decrypt backup:", backup.id, error);
+            return { ...backup, decryptedContent: "[Unable to decrypt]" };
+          }
+        })
+      );
+
+      setBackups(decryptedBackups);
+    } catch (error) {
+      setBackupError(error.message);
+    } finally {
+      setIsLoadingBackups(false);
+    }
+  };
+
+  const handleDeleteBackup = async (messageId) => {
+    try {
+      await api.deleteBackup(token, messageId);
+      setBackups((prev) => prev.filter((b) => b.id !== messageId));
+      setToast({ message: "✓ Backup removed.", tone: "success" });
+    } catch (error) {
+      setToast({ message: `Failed to remove backup: ${error.message}`, tone: "error" });
+    }
+  };
+
   const relationshipLabels = {
     friends: "You're friends",
     pending_outgoing: "Request sent",
@@ -1235,6 +1293,21 @@ export default function ChatPage() {
                   </button>
                 </div>
               </div>
+              <div className="field ghost">
+                <span className="field-label">Backup Management</span>
+                <button
+                  type="button"
+                  className="ghost-button inline"
+                  onClick={() => {
+                    setIsBackupModalOpen(true);
+                    setIsSettingsOpen(false);
+                  }}
+                  style={{ width: "100%", marginTop: "8px" }}
+                >
+                  📁 Manage Backups
+                </button>
+                <span className="field-note">View and manage your saved messages.</span>
+              </div>
               {settingsError && <p className="form-error banner">{settingsError}</p>}
               <div className="settings-actions">
                 <button
@@ -1254,6 +1327,93 @@ export default function ChatPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {isBackupModalOpen && (
+        <div className="settings-overlay" onClick={() => setIsBackupModalOpen(false)}>
+          <div
+            className="settings-modal"
+            onClick={(event) => event.stopPropagation()}
+            style={{ maxWidth: "700px", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column" }}
+          >
+            <header className="settings-modal-header">
+              <div>
+                <h2>Backup Management</h2>
+                <p>View and manage your saved messages.</p>
+              </div>
+              <button
+                type="button"
+                className="settings-close"
+                onClick={() => setIsBackupModalOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <div style={{ flex: 1, overflow: "auto", padding: "16px 0" }}>
+              {isLoadingBackups ? (
+                <p style={{ textAlign: "center", color: "var(--text-muted)" }}>Loading backups...</p>
+              ) : backupError ? (
+                <p style={{ textAlign: "center", color: "#ff9898" }}>{backupError}</p>
+              ) : backups.length === 0 ? (
+                <p style={{ textAlign: "center", color: "var(--text-muted)" }}>No saved messages yet.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                  {backups.map((backup) => {
+                    const isOwn = backup.senderID === user.id;
+                    const otherUsername = isOwn
+                      ? (backup.receiver?.username || "Unknown")
+                      : (backup.sender?.username || "Unknown");
+                    const date = new Date(backup.timestamp || backup.sentAt);
+                    return (
+                      <div
+                        key={backup.id}
+                        style={{
+                          background: "var(--panel-soft)",
+                          borderRadius: "16px",
+                          padding: "16px",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "8px",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--text-muted)" }}>
+                              {isOwn ? `You → ${otherUsername}` : `${otherUsername} → You`}
+                            </p>
+                            <p style={{ margin: "4px 0 0", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                              {date.toLocaleString()}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="ghost-button inline danger"
+                            onClick={() => handleDeleteBackup(backup.id)}
+                            style={{ flexShrink: 0 }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                        <p style={{ margin: 0, wordBreak: "break-word", color: "var(--text-primary)" }}>
+                          {backup.decryptedContent}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div style={{ paddingTop: "16px", borderTop: "1px solid var(--card-border)" }}>
+              <button
+                type="button"
+                className="ghost-button inline"
+                onClick={() => setIsBackupModalOpen(false)}
+                style={{ width: "100%" }}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -490,10 +490,10 @@ def update_message_status(conversation_id: int, message_id: int):
 @jwt_required()
 def toggle_save_message(conversation_id: int, message_id: int):
     """
-    Toggle save status for a message.
+    Toggle save status for a message (per-user).
 
-    Saved messages are exempt from auto-deletion and kept forever.
-    Users can save important messages they want to preserve.
+    Saved messages are exempt from auto-deletion and kept forever for the user who saved them.
+    Each user can independently save messages they want to preserve.
     """
     current_user_id = _current_user_id()
     payload = request.get_json(silent=True) or {}
@@ -508,11 +508,19 @@ def toggle_save_message(conversation_id: int, message_id: int):
     if message.senderID != current_user_id and message.receiverID != current_user_id:
         return jsonify({"message": "You can only save your own messages."}), 403
 
-    # Update saved status
-    message.saved = bool(saved)
+    # Update per-user saved status
+    is_sender = message.senderID == current_user_id
+    if is_sender:
+        message.saved_by_sender = bool(saved)
+    else:
+        message.saved_by_receiver = bool(saved)
+
     db.session.commit()
+
+    # Get the current user's saved status for the response
+    current_user_saved = message.saved_by_sender if is_sender else message.saved_by_receiver
 
     return jsonify({
         "message": message.to_dict(current_user_id),
-        "saved": message.saved,
+        "saved": current_user_saved,
     }), 200
