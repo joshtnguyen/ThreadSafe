@@ -82,17 +82,20 @@ export default function ChatPage() {
   const [backups, setBackups] = useState([]);
   const [isLoadingBackups, setIsLoadingBackups] = useState(false);
   const [backupError, setBackupError] = useState("");
+  const [expandedBackups, setExpandedBackups] = useState(new Set());
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [settingsForm, setSettingsForm] = useState(() => ({
     messageRetentionHours: String(user?.settings?.messageRetentionHours ?? 72),
     theme: user?.settings?.theme ?? theme ?? "dark",
   }));
+  const [isUploadingProfilePic, setIsUploadingProfilePic] = useState(false);
 
   const messageEndRef = useRef(null);
   const friendDropdownRef = useRef(null);
   const friendIconRef = useRef(null);
   const publicKeyCache = useRef({});
+  const profilePicInputRef = useRef(null);
 
   useEffect(() => {
     if (!toast) {
@@ -145,10 +148,11 @@ export default function ChatPage() {
     };
   }, [setTheme, token, updateUser]);
 
-  // Load backups when modal opens
+  // Load backups when modal opens and reset expansion state
   useEffect(() => {
     if (isBackupModalOpen) {
       loadBackups();
+      setExpandedBackups(new Set()); // Reset all expanded messages to collapsed
     }
   }, [isBackupModalOpen]);
 
@@ -440,6 +444,7 @@ export default function ChatPage() {
           const newConversation = {
             id: otherUserId,
             name: message.sender?.username || "Unknown",
+            profilePicUrl: message.sender?.profilePicUrl || null,
             participants: [message.sender],
             lastMessage: message,
             updatedAt: message.sentAt,
@@ -1003,11 +1008,27 @@ export default function ChatPage() {
 
   const handleThemeChange = (nextTheme) => {
     const safeTheme = nextTheme === "light" ? "light" : "dark";
+
+    // Add class to disable all transitions during theme change
+    document.documentElement.classList.add('theme-changing');
+
+    // Apply theme to DOM INSTANTLY
+    document.documentElement.setAttribute('data-theme', safeTheme);
+
+    // Update React state (for persistence)
     setSettingsForm((prev) => ({
       ...prev,
       theme: safeTheme,
     }));
     setTheme(safeTheme);
+
+    // Remove transition-disabling class after theme is applied
+    // Use double RAF to ensure it happens after paint
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.documentElement.classList.remove('theme-changing');
+      });
+    });
   };
 
   const handleSettingsSubmit = async (event) => {
@@ -1110,6 +1131,58 @@ export default function ChatPage() {
       setToast({ message: "✓ Conversation deleted.", tone: "success" });
     } catch (error) {
       setToast({ message: `Failed to delete conversation: ${error.message}`, tone: "error" });
+    }
+  };
+
+  const handleProfilePicClick = () => {
+    profilePicInputRef.current?.click();
+  };
+
+  const handleProfilePicChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+    if (!validTypes.includes(file.type)) {
+      setToast({ message: "Invalid file type. Please use JPG, PNG, GIF, or WebP.", tone: "error" });
+      return;
+    }
+
+    // Validate file size (500KB)
+    if (file.size > 500 * 1024) {
+      setToast({ message: "Image too large. Maximum size is 500KB.", tone: "error" });
+      return;
+    }
+
+    setIsUploadingProfilePic(true);
+
+    try {
+      // Read file as base64
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const imageData = e.target.result;
+
+        try {
+          const response = await api.uploadProfilePicture(token, imageData);
+          updateUser(response.user);
+          setToast({ message: "✓ Profile picture updated!", tone: "success" });
+        } catch (error) {
+          setToast({ message: error.message, tone: "error" });
+        } finally {
+          setIsUploadingProfilePic(false);
+          // Reset input so same file can be selected again
+          event.target.value = "";
+        }
+      };
+      reader.onerror = () => {
+        setToast({ message: "Failed to read image file.", tone: "error" });
+        setIsUploadingProfilePic(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (error) {
+      setToast({ message: "Failed to upload profile picture.", tone: "error" });
+      setIsUploadingProfilePic(false);
     }
   };
 
@@ -1389,20 +1462,35 @@ export default function ChatPage() {
                       ? (backup.receiver?.username || "Unknown")
                       : (backup.sender?.username || "Unknown");
                     const date = new Date(backup.timestamp || backup.sentAt);
+                    const content = backup.decryptedContent || "";
+                    const isLongMessage = content.length > 200;
+                    const isExpanded = expandedBackups.has(backup.id);
+                    const displayContent = isLongMessage && !isExpanded
+                      ? content.substring(0, 200) + "..."
+                      : content;
+
                     return (
                       <div
                         key={backup.id}
                         style={{
                           background: "var(--panel-soft)",
                           borderRadius: "16px",
-                          padding: "16px",
                           display: "flex",
-                          flexDirection: "column",
-                          gap: "8px",
+                          overflow: "hidden",
                         }}
                       >
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                          <div style={{ flex: 1 }}>
+                        {/* Left side - Content */}
+                        <div
+                          style={{
+                            flex: 1,
+                            padding: "16px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "8px",
+                            minWidth: 0,
+                          }}
+                        >
+                          <div>
                             <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--text-muted)" }}>
                               {isOwn ? `You → ${otherUsername}` : `${otherUsername} → You`}
                             </p>
@@ -1410,18 +1498,62 @@ export default function ChatPage() {
                               {date.toLocaleString()}
                             </p>
                           </div>
-                          <button
-                            type="button"
-                            className="ghost-button inline danger"
-                            onClick={() => handleDeleteBackup(backup.id)}
-                            style={{ flexShrink: 0 }}
-                          >
-                            Delete
-                          </button>
+                          <p style={{ margin: 0, wordBreak: "break-word", color: "var(--text-primary)" }}>
+                            {displayContent}
+                          </p>
+                          {isLongMessage && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setExpandedBackups((prev) => {
+                                  const newSet = new Set(prev);
+                                  if (isExpanded) {
+                                    newSet.delete(backup.id);
+                                  } else {
+                                    newSet.add(backup.id);
+                                  }
+                                  return newSet;
+                                });
+                              }}
+                              style={{
+                                background: "transparent",
+                                border: "none",
+                                color: "var(--text-muted)",
+                                cursor: "pointer",
+                                fontSize: "0.75rem",
+                                padding: "4px 0",
+                                textAlign: "left",
+                                fontWeight: 400,
+                              }}
+                            >
+                              {isExpanded ? "hide..." : "see more..."}
+                            </button>
+                          )}
                         </div>
-                        <p style={{ margin: 0, wordBreak: "break-word", color: "var(--text-primary)" }}>
-                          {backup.decryptedContent}
-                        </p>
+
+                        {/* Right side - Delete button */}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBackup(backup.id)}
+                          style={{
+                            width: "80px",
+                            background: "transparent",
+                            border: "none",
+                            borderLeft: "1px solid var(--card-border)",
+                            color: "#ff9898",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: "0.85rem",
+                            fontWeight: 600,
+                            transition: "background 0.2s ease",
+                          }}
+                          onMouseEnter={(e) => (e.target.style.background = "rgba(255, 152, 152, 0.1)")}
+                          onMouseLeave={(e) => (e.target.style.background = "transparent")}
+                        >
+                          Delete
+                        </button>
                       </div>
                     );
                   })}
@@ -1444,12 +1576,31 @@ export default function ChatPage() {
       <div className="chat-layout">
         <aside className="sidebar sidebar-rail">
           <div className="sidebar-profile">
-            <div className="avatar">{user.displayName?.charAt(0).toUpperCase()}</div>
-            <div className="sidebar-profile-copy" style={{ minWidth: 0, flex: 1 }}>
-              <h2 style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user.displayName || user.username}>
+            <input
+              ref={profilePicInputRef}
+              type="file"
+              accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+              style={{ display: "none" }}
+              onChange={handleProfilePicChange}
+            />
+            <div
+              className="avatar"
+              onClick={handleProfilePicClick}
+              style={{ opacity: isUploadingProfilePic ? 0.5 : 1, cursor: isUploadingProfilePic ? "wait" : "pointer" }}
+              title="Click to change profile picture"
+            >
+              {user.profilePicUrl ? (
+                <img src={user.profilePicUrl} alt="Profile" className="avatar-image" />
+              ) : (
+                user.displayName?.charAt(0).toUpperCase()
+              )}
+              <div className="avatar-edit-overlay"></div>
+            </div>
+            <div className="sidebar-profile-copy">
+              <h2 title={user.displayName || user.username}>
                 {user.displayName || user.username}
               </h2>
-              <p style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`@${user.username}`}>
+              <p title={`@${user.username}`}>
                 @{user.username}
               </p>
             </div>
@@ -1520,13 +1671,17 @@ export default function ChatPage() {
                 {friendSearchResult && (
                   <div className="friend-search-card">
                     <div className="search-card-avatar">
-                      {friendSearchResult.user.username.charAt(0).toUpperCase()}
+                      {friendSearchResult.user.profilePicUrl ? (
+                        <img src={friendSearchResult.user.profilePicUrl} alt="Profile" className="avatar-image" />
+                      ) : (
+                        friendSearchResult.user.username.charAt(0).toUpperCase()
+                      )}
                     </div>
                     <div className="search-card-info">
-                      <p className="search-card-name">
+                      <p className="search-card-name" title={friendSearchResult.user.displayName || friendSearchResult.user.username}>
                         {friendSearchResult.user.displayName || friendSearchResult.user.username}
                       </p>
-                      <p className="search-card-username">@{friendSearchResult.user.username}</p>
+                      <p className="search-card-username" title={`@${friendSearchResult.user.username}`}>@{friendSearchResult.user.username}</p>
                       <span className="search-card-status">
                         {relationshipLabels[friendSearchResult.relationshipStatus]}
                       </span>
@@ -1549,7 +1704,16 @@ export default function ChatPage() {
                               borderBottom: "1px solid #eee",
                             }}
                           >
-                            <div style={{ marginBottom: "8px", fontWeight: "500" }}>
+                            <div
+                              style={{
+                                marginBottom: "8px",
+                                fontWeight: "500",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap"
+                              }}
+                              title={request.user.username}
+                            >
                               {request.user.username}
                             </div>
                             <div style={{ display: "flex", gap: "8px" }}>
@@ -1605,9 +1769,13 @@ export default function ChatPage() {
                               style={{ paddingRight: "40px" }}
                             >
                               <span className="nav-avatar">
-                                {friend.username.charAt(0).toUpperCase()}
+                                {friend.profilePicUrl ? (
+                                  <img src={friend.profilePicUrl} alt="Profile" className="avatar-image" />
+                                ) : (
+                                  friend.username.charAt(0).toUpperCase()
+                                )}
                               </span>
-                              <span className="nav-label">
+                              <span className="nav-label" title={friend.username}>
                                 {friend.username}
                               </span>
                             </button>
@@ -1735,10 +1903,22 @@ export default function ChatPage() {
                               display: "flex",
                               justifyContent: "space-between",
                               alignItems: "center",
+                              gap: "8px",
                             }}
                           >
-                            <span>{request.user.username}</span>
-                            <span style={{ fontSize: "11px" }}>⏳ Pending</span>
+                            <span
+                              style={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                flex: 1,
+                                minWidth: 0,
+                              }}
+                              title={request.user.username}
+                            >
+                              {request.user.username}
+                            </span>
+                            <span style={{ fontSize: "11px", flexShrink: 0 }}>⏳ Pending</span>
                           </div>
                         ))}
                       </div>
@@ -1754,13 +1934,17 @@ export default function ChatPage() {
                           <div className="blocked-entry" key={blocked.id ?? blocked.username}>
                             <div className="blocked-entry-info">
                               <span className="blocked-entry-avatar">
-                                {blocked.username?.charAt(0).toUpperCase()}
+                                {blocked.profilePicUrl ? (
+                                  <img src={blocked.profilePicUrl} alt="Profile" className="avatar-image" />
+                                ) : (
+                                  blocked.username?.charAt(0).toUpperCase()
+                                )}
                               </span>
-                              <div>
-                                <div className="blocked-entry-name">
+                              <div style={{ minWidth: 0, overflow: "hidden", flex: 1 }}>
+                                <div className="blocked-entry-name" title={blocked.displayName || blocked.username}>
                                   {blocked.displayName || blocked.username}
                                 </div>
-                                <div className="blocked-entry-username">@{blocked.username}</div>
+                                <div className="blocked-entry-username" title={`@${blocked.username}`}>@{blocked.username}</div>
                               </div>
                             </div>
                             <button
@@ -1814,7 +1998,11 @@ export default function ChatPage() {
                         style={{ paddingRight: "40px" }}
                       >
                         <div className="conversation-avatar">
-                          {conversation.name?.charAt(0).toUpperCase()}
+                          {conversation.profilePicUrl ? (
+                            <img src={conversation.profilePicUrl} alt="Profile" className="avatar-image" />
+                          ) : (
+                            conversation.name?.charAt(0).toUpperCase()
+                          )}
                         </div>
                         <div className="conversation-copy">
                           <span className="conversation-name" title={conversation.name}>{conversation.name}</span>
@@ -1908,9 +2096,9 @@ export default function ChatPage() {
             <header className="panel-header conversation">
               <h1
               style={selectedConversation ? { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : {}}
-              title={selectedConversation?.name || ""}
+              title={selectedConversation?.participants?.[0]?.displayName || selectedConversation?.name || ""}
             >
-              {selectedConversation?.name || "Select a conversation"}
+              {selectedConversation?.participants?.[0]?.displayName || selectedConversation?.name || "Select a conversation"}
             </h1>
             </header>
             <div className="message-list">

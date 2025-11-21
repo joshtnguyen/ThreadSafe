@@ -37,7 +37,19 @@ function applyTheme(theme) {
   if (typeof document === "undefined") {
     return;
   }
-  document.documentElement.dataset.theme = theme;
+
+  // Disable transitions temporarily to prevent flash
+  document.documentElement.classList.add('theme-changing');
+
+  // Apply theme instantly
+  document.documentElement.setAttribute('data-theme', theme);
+
+  // Re-enable transitions after paint completes
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      document.documentElement.classList.remove('theme-changing');
+    });
+  });
 }
 
 export function ThemeProvider({ children }) {

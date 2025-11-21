@@ -120,4 +120,9 @@ export const api = {
   getBackups: (token) => request("/backups", { token }),
   deleteBackup: (token, messageId) =>
     request(`/backups/${messageId}`, { method: "DELETE", token }),
+  // Profile picture
+  uploadProfilePicture: (token, imageData) =>
+    request("/settings/profile-picture", { method: "POST", token, body: { imageData } }),
+  deleteProfilePicture: (token) =>
+    request("/settings/profile-picture", { method: "DELETE", token }),
 };

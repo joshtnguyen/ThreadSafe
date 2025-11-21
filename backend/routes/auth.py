@@ -23,6 +23,7 @@ def register():
     username = payload.get("username", "").strip()
     email = payload.get("email", "").strip()
     password = payload.get("password", "")
+    display_name = payload.get("displayName", "").strip() or None  # Full name (optional)
 
     if not username or not password or not email:
         return jsonify({"message": "Username, email, and password are required."}), 400
@@ -63,6 +64,7 @@ def register():
         username=username,  # Preserve exact case
         email=normalised_email,
         password=generate_password_hash(password, method="pbkdf2:sha256"),
+        display_name=display_name,  # Full name
     )
 
     db.session.add(user)

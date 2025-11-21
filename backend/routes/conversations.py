@@ -93,6 +93,7 @@ def list_conversations():
         conversations.append({
             "id": contact_id,  # Using contact's userID as conversation ID
             "name": contact_user.username,
+            "profilePicUrl": contact_user.prof_pic_url,
             "participants": [contact_user.to_dict()],
             "lastMessage": last_message.to_dict(current_user_id) if last_message else None,
             "updatedAt": last_message.timeStamp.isoformat() if last_message else None,
@@ -170,6 +171,7 @@ def create_conversation():
     conversation = {
         "id": target_user.userID,
         "name": target_user.username,
+        "profilePicUrl": target_user.prof_pic_url,
         "participants": [target_user.to_dict()],
         "lastMessage": last_message.to_dict(current_user_id) if last_message else None,
         "updatedAt": last_message.timeStamp.isoformat() if last_message else datetime.utcnow().isoformat(),
@@ -215,6 +217,7 @@ def get_conversation(conversation_id: int):
     conversation = {
         "id": contact_user.userID,
         "name": contact_user.username,
+        "profilePicUrl": contact_user.prof_pic_url,
         "participants": [contact_user.to_dict()],
         "lastMessage": last_message.to_dict(current_user_id) if last_message else None,
         "updatedAt": last_message.timeStamp.isoformat() if last_message else None,

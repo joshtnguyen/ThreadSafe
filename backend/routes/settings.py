@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
@@ -88,6 +89,72 @@ def update_settings():
     db.session.commit()
 
     return jsonify({"settings": _with_defaults(user.settings)}), 200
+
+
+@settings_bp.post("/profile-picture")
+@jwt_required()
+def upload_profile_picture():
+    """Upload or update user profile picture (base64 encoded)."""
+    user = _current_user()
+    if not user:
+        return jsonify({"message": "User not found."}), 404
+
+    payload = request.get_json(silent=True) or {}
+    image_data = payload.get("imageData")
+
+    if not image_data:
+        return jsonify({"message": "No image data provided."}), 400
+
+    # Validate base64 format: data:image/[type];base64,[data]
+    if not image_data.startswith("data:image/"):
+        return jsonify({"message": "Invalid image format. Must be a data URL."}), 400
+
+    # Extract mime type and validate
+    try:
+        header, encoded = image_data.split(",", 1)
+        mime_type = header.split(":")[1].split(";")[0]
+
+        # Supported formats
+        allowed_types = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"]
+        if mime_type not in allowed_types:
+            return jsonify({"message": f"Unsupported image type. Allowed: {', '.join(allowed_types)}"}), 400
+
+        # Decode to check validity and size
+        decoded = base64.b64decode(encoded)
+        size_kb = len(decoded) / 1024
+
+        # Limit size to 500KB
+        if size_kb > 500:
+            return jsonify({"message": f"Image too large ({size_kb:.1f}KB). Maximum size is 500KB."}), 400
+
+    except Exception as e:
+        return jsonify({"message": f"Invalid image data: {str(e)}"}), 400
+
+    # Save to database
+    user.prof_pic_url = image_data
+    db.session.commit()
+
+    return jsonify({
+        "message": "Profile picture updated successfully.",
+        "user": user.to_dict()
+    }), 200
+
+
+@settings_bp.delete("/profile-picture")
+@jwt_required()
+def delete_profile_picture():
+    """Remove user profile picture."""
+    user = _current_user()
+    if not user:
+        return jsonify({"message": "User not found."}), 404
+
+    user.prof_pic_url = None
+    db.session.commit()
+
+    return jsonify({
+        "message": "Profile picture removed.",
+        "user": user.to_dict()
+    }), 200
 
 
 __all__ = ["settings_bp"]

@@ -17,6 +17,7 @@ class User(db.Model):
     username = db.Column(db.String(255), unique=True, nullable=False, index=True)
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password = db.Column(db.String(255), nullable=False)  # Stores hashed password
+    display_name = db.Column(db.String(255), nullable=True)  # User's full name
     prof_pic_url = db.Column(db.Text)
     settings = db.Column(db.JSON)  # MySQL: JSON, SQLite: TEXT with JSON serialization
     settings_updated_at = db.Column(db.DateTime, nullable=True, index=True)  # Track when settings last changed
@@ -80,7 +81,7 @@ class User(db.Model):
             "id": self.userID,
             "username": self.username,
             "email": self.email,
-            "displayName": self.username,  # For backward compatibility
+            "displayName": self.display_name or self.username,  # Full name or fallback to username
             "profilePicUrl": self.prof_pic_url,
             "settings": self.settings,
             "isActive": self.is_active,

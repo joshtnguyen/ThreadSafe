@@ -33,10 +33,10 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --page-bg: #f5f6fb;
-  --panel-dark: #ffffff;
-  --panel-muted: #f4f4f4;
-  --panel-soft: #ededed;
+  --page-bg: #e8eaf0;
+  --panel-dark: #f8f9fc;
+  --panel-muted: #eeeff4;
+  --panel-soft: #e3e4e9;
   --card-radius: 28px;
   --text-primary: #1f1f1f;
   --text-muted: #5a5a5a;
@@ -47,7 +47,7 @@
   --input-bg: #ffffff;
   --input-color: #1f1f1f;
   --button-primary-text: #ffffff;
-  --bubble-bg: #ffffff;
+  --bubble-bg: #f5f6fa;
   --bubble-border: rgba(0, 0, 0, 0.06);
   --bubble-text: #1f1f1f;
   --bubble-meta: rgba(0, 0, 0, 0.45);
@@ -61,6 +61,12 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* Temporarily disable transitions only during theme change */
+.theme-changing,
+.theme-changing * {
+  transition: none !important;
 }
 
 body {
@@ -359,17 +365,30 @@ input {
   align-items: center;
   gap: 8px;
   text-align: center;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .sidebar-profile h2 {
   margin: 0;
   font-size: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  width: 100%;
 }
 
 .sidebar-profile p {
   margin: 0;
   color: var(--text-muted);
   font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  width: 100%;
 }
 
 .avatar {
@@ -381,12 +400,58 @@ input {
   place-items: center;
   font-weight: 700;
   font-size: 1.3rem;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.avatar:hover {
+  opacity: 0.8;
+}
+
+.avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 22px;
+}
+
+.avatar-edit-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.avatar:hover .avatar-edit-overlay {
+  opacity: 1;
+}
+
+.avatar-edit-overlay::before {
+  content: "";
+  width: 30px;
+  height: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.95)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7'%3E%3C/path%3E%3Cpath d='M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z'%3E%3C/path%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
 }
 
 .sidebar-profile-copy {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  overflow: hidden;
 }
 
 .sidebar-icon {
@@ -401,8 +466,8 @@ input {
   color: inherit;
   transition: background 0.2s ease, transform 0.2s ease;
   text-transform: uppercase;
-  font-size: 0.75rem;
-  letter-spacing: 0.16em;
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
   position: relative;
 }
 
@@ -442,9 +507,10 @@ input {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-size: 0.85rem;
-  padding: 8px 12px;
+  font-size: 0.75rem;
+  padding: 8px 8px;
   transition: background 0.2s ease;
+  white-space: nowrap;
 }
 
 .sidebar-mini-logout:hover {
@@ -525,6 +591,8 @@ input {
   place-items: center;
   font-weight: 600;
   font-size: 1.2rem;
+  position: relative;
+  overflow: hidden;
 }
 
 .search-card-info {
@@ -532,17 +600,27 @@ input {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .search-card-name {
   margin: 0;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .search-card-username {
   margin: 0;
   color: var(--text-muted);
   font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .search-card-status {
@@ -630,6 +708,9 @@ input {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .blocked-entry-avatar {
@@ -640,16 +721,26 @@ input {
   display: grid;
   place-items: center;
   font-weight: 600;
+  position: relative;
+  overflow: hidden;
 }
 
 .blocked-entry-name {
   font-weight: 600;
   font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .blocked-entry-username {
   font-size: 0.8rem;
   color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .nav-section {
@@ -709,6 +800,8 @@ input {
   display: grid;
   place-items: center;
   font-weight: 600;
+  position: relative;
+  overflow: hidden;
 }
 
 .nav-label {
@@ -911,6 +1004,8 @@ input {
   display: grid;
   place-items: center;
   font-weight: 700;
+  position: relative;
+  overflow: hidden;
 }
 
 .conversation-copy {
@@ -1041,14 +1136,79 @@ input {
   color: rgba(0, 0, 0, 0.7);
 }
 
+/* Light mode star colors */
+:root[data-theme="light"] .save-message-btn {
+  color: rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme="light"] .save-message-btn:hover {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+:root[data-theme="light"] .message-bubble.own .save-message-btn {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+:root[data-theme="light"] .message-bubble.own .save-message-btn:hover {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* Dark mode starred messages - gold/amber with better contrast */
 .message-bubble.saved {
-  border: 2px solid rgba(255, 215, 0, 0.5);
-  background: rgba(255, 215, 0, 0.08);
+  border: 2px solid rgba(255, 200, 50, 0.8);
+  background: rgba(255, 200, 50, 0.35);
+  color: #1a1a1a !important;
+}
+
+.message-bubble.saved .bubble-text {
+  color: #1a1a1a;
+}
+
+.message-bubble.saved .bubble-meta {
+  color: rgba(0, 0, 0, 0.7) !important;
+}
+
+.message-bubble.saved .bubble-time {
+  color: rgba(0, 0, 0, 0.6) !important;
 }
 
 .message-bubble.own.saved {
-  border: 2px solid rgba(255, 215, 0, 0.7);
-  background: rgba(255, 215, 0, 0.15);
+  border: 2px solid rgba(255, 200, 50, 0.9);
+  background: rgba(255, 200, 50, 0.4);
+  color: #1a1a1a !important;
+}
+
+.message-bubble.own.saved .bubble-text {
+  color: #1a1a1a;
+}
+
+.message-bubble.own.saved .bubble-meta {
+  color: rgba(0, 0, 0, 0.7) !important;
+}
+
+.message-bubble.own.saved .bubble-time {
+  color: rgba(0, 0, 0, 0.6) !important;
+}
+
+/* Light mode starred messages - darker yellow */
+:root[data-theme="light"] .message-bubble.saved {
+  border: 2px solid rgba(200, 160, 0, 0.6);
+  background: rgba(200, 160, 0, 0.15);
+}
+
+:root[data-theme="light"] .message-bubble.own.saved {
+  border: 2px solid rgba(200, 160, 0, 0.7);
+  background: rgba(200, 160, 0, 0.2);
+}
+
+:root[data-theme="light"] .message-bubble.saved .save-message-btn,
+:root[data-theme="light"] .message-bubble.own.saved .save-message-btn {
+  color: rgba(0, 0, 0, 0.8);
+}
+
+:root[data-theme="light"] .message-bubble.saved .save-message-btn:hover,
+:root[data-theme="light"] .message-bubble.own.saved .save-message-btn:hover {
+  color: rgba(0, 0, 0, 1);
 }
 
 .composer {
@@ -1092,6 +1252,11 @@ input {
   text-align: right;
   padding: 4px 12px 8px;
   margin: 0;
+}
+
+/* Light mode character counter */
+:root[data-theme="light"] .character-counter {
+  color: rgba(0, 0, 0, 0.5);
 }
 
 .bottom-tab-bar {
