@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
@@ -82,6 +84,7 @@ def update_settings():
     user_settings = user.settings.copy() if isinstance(user.settings, dict) else {}
     user_settings.update(updates)
     user.settings = user_settings
+    user.settings_updated_at = datetime.utcnow()  # Track when settings were changed
     db.session.commit()
 
     return jsonify({"settings": _with_defaults(user.settings)}), 200

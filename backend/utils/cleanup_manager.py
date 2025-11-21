@@ -70,9 +70,15 @@ def cleanup_expired_messages() -> dict:
 
             # Check sender's deletion time
             if not message.deleted_for_sender:
-                sender_deletion_time = both_read_time + timedelta(hours=sender_retention_hours)
+                # Use the later of: both_read_time OR settings_updated_at (if settings were changed after reading)
+                sender_start_time = both_read_time
+                if sender.settings_updated_at and sender.settings_updated_at > both_read_time:
+                    sender_start_time = sender.settings_updated_at
+                    print(f"    Sender changed settings at {sender.settings_updated_at}, using as start time")
+
+                sender_deletion_time = sender_start_time + timedelta(hours=sender_retention_hours)
                 time_until_sender_delete = (sender_deletion_time - now).total_seconds()
-                print(f"    Sender deletion in {time_until_sender_delete:.1f}s (read at {both_read_time})")
+                print(f"    Sender deletion in {time_until_sender_delete:.1f}s (start time: {sender_start_time})")
                 if now >= sender_deletion_time:
                     print(f"    -> Deleting for SENDER {sender.username}")
                     message.deleted_for_sender = True
@@ -83,9 +89,15 @@ def cleanup_expired_messages() -> dict:
 
             # Check receiver's deletion time
             if not message.deleted_for_receiver:
-                receiver_deletion_time = both_read_time + timedelta(hours=receiver_retention_hours)
+                # Use the later of: both_read_time OR settings_updated_at (if settings were changed after reading)
+                receiver_start_time = both_read_time
+                if receiver.settings_updated_at and receiver.settings_updated_at > both_read_time:
+                    receiver_start_time = receiver.settings_updated_at
+                    print(f"    Receiver changed settings at {receiver.settings_updated_at}, using as start time")
+
+                receiver_deletion_time = receiver_start_time + timedelta(hours=receiver_retention_hours)
                 time_until_receiver_delete = (receiver_deletion_time - now).total_seconds()
-                print(f"    Receiver deletion in {time_until_receiver_delete:.1f}s (read at {both_read_time})")
+                print(f"    Receiver deletion in {time_until_receiver_delete:.1f}s (start time: {receiver_start_time})")
                 if now >= receiver_deletion_time:
                     print(f"    -> Deleting for RECEIVER {receiver.username}")
                     message.deleted_for_receiver = True

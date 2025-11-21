@@ -19,6 +19,7 @@ class User(db.Model):
     password = db.Column(db.String(255), nullable=False)  # Stores hashed password
     prof_pic_url = db.Column(db.Text)
     settings = db.Column(db.JSON)  # MySQL: JSON, SQLite: TEXT with JSON serialization
+    settings_updated_at = db.Column(db.DateTime, nullable=True, index=True)  # Track when settings last changed
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
