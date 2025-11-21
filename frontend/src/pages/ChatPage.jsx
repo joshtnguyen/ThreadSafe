@@ -22,7 +22,16 @@ const formatTime = (value) => {
   if (!date || Number.isNaN(date.getTime())) {
     return "";
   }
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // Format: m/dd/yy h:mm am/pm (no leading zeros on hour)
+  const month = date.getMonth() + 1;
+  const day = String(date.getDate()).padStart(2, '0');
+  const year = String(date.getFullYear()).slice(-2);
+  const hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'pm' : 'am';
+  const hour12 = hours % 12 || 12; // Convert to 12-hour format, no leading zero
+
+  return `${month}/${day}/${year} at ${hour12}:${minutes} ${ampm}`;
 };
 
 const getTimestampMs = (value) => {
@@ -50,6 +59,8 @@ export default function ChatPage() {
     onUserUnblocked,
     onMessageStatusUpdate,
     onMessageDeleted,
+    onMessageEdited,
+    onMessageUnsent,
   } = useWebSocket();
 
   const [conversations, setConversations] = useState([]);
@@ -90,6 +101,13 @@ export default function ChatPage() {
     theme: user?.settings?.theme ?? theme ?? "dark",
   }));
   const [isUploadingProfilePic, setIsUploadingProfilePic] = useState(false);
+
+  // Edit, unsend, and reply states
+  const [contextMenu, setContextMenu] = useState(null); // { x, y, messageId, isOwn }
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [editContent, setEditContent] = useState("");
+  const [replyingTo, setReplyingTo] = useState(null); // { id, senderUsername, content }
+  const [isEditing, setIsEditing] = useState(false);
 
   const messageEndRef = useRef(null);
   const friendDropdownRef = useRef(null);
@@ -598,6 +616,64 @@ export default function ChatPage() {
     return unsubscribe;
   }, [onMessageDeleted]);
 
+  // Listen for message edited events
+  useEffect(() => {
+    const unsubscribe = onMessageEdited(async (editData) => {
+      const { messageId, message: updatedMessage } = editData;
+
+      console.log(`Message ${messageId} was edited`);
+
+      // Update the message in the messages list
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+            ? { ...msg, ...updatedMessage, editedAt: updatedMessage.editedAt }
+            : msg
+        )
+      );
+
+      // Decrypt the updated message if we have a private key
+      if (privateKey && updatedMessage.encrypted_aes_key && updatedMessage.ephemeral_public_key) {
+        try {
+          const plaintext = await decryptMessageComplete(updatedMessage, privateKey);
+          setDecryptedMessages((prev) => ({
+            ...prev,
+            [messageId]: plaintext,
+          }));
+        } catch (error) {
+          console.error(`Failed to decrypt edited message ${messageId}:`, error);
+        }
+      }
+    });
+    return unsubscribe;
+  }, [onMessageEdited, privateKey]);
+
+  // Listen for message unsent events
+  useEffect(() => {
+    const unsubscribe = onMessageUnsent((unsentData) => {
+      const { messageId, senderUsername, unsentAt } = unsentData;
+
+      console.log(`Message ${messageId} was unsent by ${senderUsername}`);
+
+      // Update the message in the messages list to show as unsent
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+            ? { ...msg, isUnsent: true, unsentAt, senderUsername }
+            : msg
+        )
+      );
+
+      // Clear decrypted content for this message
+      setDecryptedMessages((prev) => {
+        const newState = { ...prev };
+        delete newState[messageId];
+        return newState;
+      });
+    });
+    return unsubscribe;
+  }, [onMessageUnsent]);
+
   // Listen for block/unblock events targeting current user
   useEffect(() => {
     const unsubscribeBlocked = onUserBlocked((blocker) => {
@@ -663,6 +739,140 @@ export default function ChatPage() {
     }
   };
 
+  // Right-click context menu handler
+  const handleMessageContextMenu = (event, message) => {
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      messageId: message.id,
+      isOwn: message.isOwn,
+      message,
+    });
+  };
+
+  // Close context menu on click anywhere
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    if (contextMenu) {
+      document.addEventListener("click", handleClick);
+      return () => document.removeEventListener("click", handleClick);
+    }
+  }, [contextMenu]);
+
+  // Start editing a message
+  const handleStartEdit = (message) => {
+    const content = decryptedMessages[message.id] || "";
+    setEditingMessageId(message.id);
+    setEditContent(content);
+    setContextMenu(null);
+  };
+
+  // Cancel editing
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setEditContent("");
+  };
+
+  // Save edited message
+  const handleSaveEdit = async () => {
+    if (!editContent.trim() || !editingMessageId || !selectedId) return;
+
+    setIsEditing(true);
+    try {
+      // Get recipient's public key
+      let recipientPublicKey = publicKeyCache.current[selectedId];
+      if (!recipientPublicKey) {
+        const keyResponse = await api.getPublicKey(token, selectedId);
+        recipientPublicKey = keyResponse.key.publicKey;
+        publicKeyCache.current[selectedId] = recipientPublicKey;
+      }
+
+      // Get sender's public key
+      const senderPublicKey = getPublicKey(user.id);
+      if (!senderPublicKey) {
+        throw new Error("Your encryption key is missing.");
+      }
+
+      // Generate AES key and encrypt
+      const aesKeyBytes = await generateAESKey();
+      const { encryptedContent, iv } = await encryptMessage(editContent.trim(), aesKeyBytes);
+      const recipientEncrypted = await encryptAESKey(aesKeyBytes, recipientPublicKey);
+      const senderEncrypted = await encryptAESKey(aesKeyBytes, senderPublicKey);
+
+      // Send edit request
+      const response = await api.editMessage(token, selectedId, editingMessageId, {
+        encryptedContent,
+        iv,
+        recipientEncryptedKey: recipientEncrypted.encryptedAESKey,
+        recipientEphemeralKey: recipientEncrypted.ephemeralPublicKey,
+        senderEncryptedKey: senderEncrypted.encryptedAESKey,
+        senderEphemeralKey: senderEncrypted.ephemeralPublicKey,
+      });
+
+      // Update local message
+      const updatedMessage = response.message;
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === editingMessageId ? { ...msg, ...updatedMessage } : msg
+        )
+      );
+
+      // Update decrypted content
+      setDecryptedMessages((prev) => ({
+        ...prev,
+        [editingMessageId]: editContent.trim(),
+      }));
+
+      setToast({ message: "Message edited.", tone: "success" });
+      handleCancelEdit();
+    } catch (error) {
+      setToast({ message: error.message, tone: "error" });
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
+  // Unsend a message
+  const handleUnsendMessage = async (messageId) => {
+    if (!selectedId) return;
+
+    try {
+      await api.unsendMessage(token, selectedId, messageId);
+
+      // Remove message from local state (it's deleted for sender)
+      setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
+
+      // Clear decrypted content
+      setDecryptedMessages((prev) => {
+        const newState = { ...prev };
+        delete newState[messageId];
+        return newState;
+      });
+
+      setToast({ message: "Message unsent.", tone: "success" });
+    } catch (error) {
+      setToast({ message: error.message, tone: "error" });
+    }
+    setContextMenu(null);
+  };
+
+  // Start replying to a message
+  const handleStartReply = (message) => {
+    const content = decryptedMessages[message.id] || "[Encrypted]";
+    setReplyingTo({
+      id: message.id,
+      senderUsername: message.isOwn ? "You" : message.sender?.username,
+      content: content.length > 50 ? content.substring(0, 50) + "..." : content,
+    });
+    setContextMenu(null);
+  };
+
+  // Cancel reply
+  const handleCancelReply = () => {
+    setReplyingTo(null);
+  };
+
   const handleSendMessage = async (event) => {
     event.preventDefault();
     const content = messageDraft.trim();
@@ -703,17 +913,26 @@ export default function ChatPage() {
       // Encrypt AES key for sender (so they can read their own messages)
       const senderEncrypted = await encryptAESKey(aesKeyBytes, senderPublicKey);
 
-      // Send encrypted message to server
-      const response = await api.sendEncryptedMessage(token, selectedId, {
+      // Send encrypted message to server (with optional reply)
+      const encryptedData = {
         encryptedContent,
         iv,
         recipientEncryptedKey: recipientEncrypted.encryptedAESKey,
         recipientEphemeralKey: recipientEncrypted.ephemeralPublicKey,
         senderEncryptedKey: senderEncrypted.encryptedAESKey,
         senderEphemeralKey: senderEncrypted.ephemeralPublicKey,
-      });
+      };
+
+      const response = replyingTo
+        ? await api.sendMessageWithReply(token, selectedId, encryptedData, replyingTo.id)
+        : await api.sendEncryptedMessage(token, selectedId, encryptedData);
 
       const newMessage = response.message;
+
+      // Clear reply state after sending
+      if (replyingTo) {
+        setReplyingTo(null);
+      }
 
       setMessages((previous) => [...previous, newMessage]);
       setConversations((previous) => {
@@ -1461,7 +1680,7 @@ export default function ChatPage() {
                     const otherUsername = isOwn
                       ? (backup.receiver?.username || "Unknown")
                       : (backup.sender?.username || "Unknown");
-                    const date = new Date(backup.timestamp || backup.sentAt);
+                    const backupTimestamp = backup.sentAt || backup.timestamp;
                     const content = backup.decryptedContent || "";
                     const isLongMessage = content.length > 200;
                     const isExpanded = expandedBackups.has(backup.id);
@@ -1495,7 +1714,7 @@ export default function ChatPage() {
                               {isOwn ? `You → ${otherUsername}` : `${otherUsername} → You`}
                             </p>
                             <p style={{ margin: "4px 0 0", fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                              {date.toLocaleString()}
+                              {formatTime(backupTimestamp)}
                             </p>
                           </div>
                           <p style={{ margin: 0, wordBreak: "break-word", color: "var(--text-primary)" }}>
@@ -2105,6 +2324,26 @@ export default function ChatPage() {
               {selectedConversation ? (
                 messages.length ? (
                   messages.map((message) => {
+                  // Handle unsent messages
+                  if (message.isUnsent) {
+                    const senderName = message.senderUsername || message.sender?.username || "Someone";
+                    return (
+                      <article
+                        key={message.id}
+                        className="message-bubble unsent-placeholder"
+                        style={{ opacity: 0.6, fontStyle: "italic" }}
+                      >
+                        <p className="bubble-text" style={{ color: "var(--text-muted)" }}>
+                          {senderName} unsent a message
+                        </p>
+                        <time className="bubble-time">{formatTime(message.unsentAt || message.sentAt)}</time>
+                      </article>
+                    );
+                  }
+
+                  // Check if this message is being edited
+                  const isEditingThis = editingMessageId === message.id;
+
                   // All messages are now decryptable (including our own sent messages!)
                   const displayContent = decryptedMessages[message.id] ||
                     (privateKey ? "Decrypting..." : message.content);
@@ -2116,11 +2355,34 @@ export default function ChatPage() {
                     return <span>Sent</span>;
                   };
 
+                  // Get reply preview if this message is a reply
+                  const replyPreview = message.replyTo ? (
+                    <div className="reply-preview-bubble" style={{
+                      background: "rgba(255,255,255,0.05)",
+                      borderLeft: "3px solid var(--text-muted)",
+                      padding: "6px 10px",
+                      marginBottom: "6px",
+                      borderRadius: "4px",
+                      fontSize: "0.8rem",
+                    }}>
+                      <span style={{ color: "var(--text-muted)", fontWeight: 600 }}>
+                        {message.replyTo.senderUsername || "Unknown"}
+                      </span>
+                      <p style={{ margin: "2px 0 0", color: "var(--text-muted)", fontSize: "0.75rem" }}>
+                        {message.replyTo.isUnsent
+                          ? "Message was unsent"
+                          : (decryptedMessages[message.replyTo.id] || "[Encrypted]").substring(0, 50)}
+                      </p>
+                    </div>
+                  ) : null;
+
                   return (
                       <article
                         key={message.id}
                         className={`message-bubble ${message.isOwn ? "own" : "their"} ${message.saved ? "saved" : ""}`}
+                        onContextMenu={(e) => handleMessageContextMenu(e, message)}
                       >
+                        {replyPreview}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <span className="bubble-meta" title={message.isOwn ? "You" : message.sender.username}>
                             {message.isOwn ? "You" : message.sender.username}
@@ -2135,8 +2397,69 @@ export default function ChatPage() {
                             {message.saved ? "★" : "☆"}
                           </button>
                         </div>
-                        <p className="bubble-text">{displayContent}</p>
+                        {isEditingThis ? (
+                          <div className="edit-mode">
+                            <textarea
+                              value={editContent}
+                              onChange={(e) => setEditContent(e.target.value)}
+                              className="edit-textarea"
+                              maxLength={2000}
+                              autoFocus
+                              style={{
+                                width: "100%",
+                                minHeight: "60px",
+                                padding: "8px",
+                                borderRadius: "8px",
+                                border: "1px solid var(--card-border)",
+                                background: "var(--input-bg)",
+                                color: "var(--input-color)",
+                                resize: "vertical",
+                                fontFamily: "inherit",
+                                fontSize: "inherit",
+                              }}
+                            />
+                            <div style={{ display: "flex", gap: "8px", marginTop: "6px", justifyContent: "flex-end" }}>
+                              <button
+                                type="button"
+                                onClick={handleCancelEdit}
+                                disabled={isEditing}
+                                style={{
+                                  fontSize: "0.75rem",
+                                  padding: "4px 10px",
+                                  background: "transparent",
+                                  border: "1px solid var(--card-border)",
+                                  borderRadius: "6px",
+                                  color: "var(--text-muted)",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSaveEdit}
+                                disabled={isEditing || !editContent.trim()}
+                                style={{
+                                  fontSize: "0.75rem",
+                                  padding: "4px 10px",
+                                  background: "var(--accent)",
+                                  border: "none",
+                                  borderRadius: "6px",
+                                  color: "var(--button-primary-text)",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {isEditing ? "Saving..." : "Save"}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="bubble-text">{displayContent}</p>
+                        )}
                         <time className="bubble-time">
+                          {message.editedAt && (
+                            <span style={{ marginRight: "6px", fontStyle: "italic" }}>(edited)</span>
+                          )}
                           {message.isOwn && (
                             <>
                               {getStatusIndicator(message.status)}
@@ -2156,6 +2479,139 @@ export default function ChatPage() {
               )}
               <span ref={messageEndRef} />
             </div>
+
+            {/* Context Menu */}
+            {contextMenu && (
+              <div
+                className="context-menu"
+                style={{
+                  position: "fixed",
+                  left: contextMenu.x,
+                  top: contextMenu.y,
+                  background: "var(--panel-dark)",
+                  border: "1px solid var(--card-border)",
+                  borderRadius: "8px",
+                  boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
+                  zIndex: 5000,
+                  minWidth: "120px",
+                  padding: "4px",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => handleStartReply(contextMenu.message)}
+                  className="context-menu-item"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    padding: "8px 12px",
+                    background: "transparent",
+                    border: "none",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    color: "var(--text-primary)",
+                    borderRadius: "4px",
+                  }}
+                  onMouseEnter={(e) => e.target.style.background = "var(--panel-soft)"}
+                  onMouseLeave={(e) => e.target.style.background = "transparent"}
+                >
+                  Reply
+                </button>
+                {contextMenu.isOwn && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleStartEdit(contextMenu.message)}
+                      className="context-menu-item"
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        padding: "8px 12px",
+                        background: "transparent",
+                        border: "none",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        color: "var(--text-primary)",
+                        borderRadius: "4px",
+                      }}
+                      onMouseEnter={(e) => e.target.style.background = "var(--panel-soft)"}
+                      onMouseLeave={(e) => e.target.style.background = "transparent"}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUnsendMessage(contextMenu.messageId)}
+                      className="context-menu-item"
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        padding: "8px 12px",
+                        background: "transparent",
+                        border: "none",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        color: "#ff9898",
+                        borderRadius: "4px",
+                      }}
+                      onMouseEnter={(e) => e.target.style.background = "var(--panel-soft)"}
+                      onMouseLeave={(e) => e.target.style.background = "transparent"}
+                    >
+                      Unsend
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Reply Preview */}
+            {replyingTo && (
+              <div
+                className="reply-preview-composer"
+                style={{
+                  background: "var(--panel-soft)",
+                  borderLeft: "3px solid var(--accent)",
+                  padding: "8px 12px",
+                  margin: "0 16px 8px",
+                  borderRadius: "6px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                    Replying to <strong>{replyingTo.senderUsername}</strong>
+                  </span>
+                  <p style={{
+                    margin: "2px 0 0",
+                    fontSize: "0.8rem",
+                    color: "var(--text-primary)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}>
+                    {replyingTo.content}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCancelReply}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    fontSize: "1.2rem",
+                    padding: "0 4px",
+                  }}
+                  title="Cancel reply"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
             <form className="composer" onSubmit={handleSendMessage}>
               <textarea
                 className="composer-input"

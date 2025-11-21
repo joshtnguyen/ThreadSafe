@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 
 from backend import create_app
-from backend.utils.cleanup_manager import cleanup_expired_messages
+from backend.utils.cleanup_manager import cleanup_expired_messages, cleanup_unsent_placeholders
 
 
 def run_cleanup_job():
@@ -20,11 +20,17 @@ def run_cleanup_job():
     app = create_app()
     with app.app_context():
         print(f"\n[{datetime.utcnow().isoformat()}] Running cleanup job...")
+
+        # Cleanup expired messages
         result = cleanup_expired_messages()
         print(f"  Hard deleted: {result['hard_deleted_count']} messages")
         print(f"  Soft deleted: {result['soft_deleted_count']} messages")
         print(f"  Total modified: {result['messages_modified']} messages")
         print(f"  Checked: {result['checked_count']} messages")
+
+        # Cleanup unsent message placeholders (24-hour expiry)
+        unsent_result = cleanup_unsent_placeholders()
+        print(f"  Unsent placeholders removed: {unsent_result['deleted_placeholder_count']}")
 
 
 def main():

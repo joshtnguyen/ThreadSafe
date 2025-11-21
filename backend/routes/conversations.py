@@ -8,7 +8,7 @@ from sqlalchemy import and_, func, or_
 
 from ..database import db
 from ..models import Contact, Message, User, PublicKey
-from ..websocket_helper import emit_new_message
+from ..websocket_helper import emit_new_message, emit_message_edited, emit_message_unsent
 from ..encryption.message_crypto import encrypt_message_for_user
 
 conversations_bp = Blueprint("conversations", __name__)
@@ -382,6 +382,18 @@ def create_message(conversation_id: int):
 
     payload = request.get_json(silent=True) or {}
 
+    # Check for reply_to_id (for reply feature)
+    reply_to_id = payload.get("replyToId")
+    if reply_to_id:
+        # Verify the replied-to message exists and is in this conversation
+        reply_to_msg = Message.query.get(reply_to_id)
+        if not reply_to_msg:
+            return jsonify({"message": "Replied-to message not found."}), 404
+        # Verify it's part of this conversation
+        if not ((reply_to_msg.senderID == current_user_id and reply_to_msg.receiverID == conversation_id) or
+                (reply_to_msg.senderID == conversation_id and reply_to_msg.receiverID == current_user_id)):
+            return jsonify({"message": "Cannot reply to a message from a different conversation."}), 400
+
     # Check if client sent pre-encrypted message
     is_encrypted = payload.get("encrypted", False)
 
@@ -418,6 +430,7 @@ def create_message(conversation_id: int):
             msg_Type="text",
             expiryTime=_message_expiry_for_user(sender),
             read_by_sender_at=datetime.utcnow(),  # Sender reads immediately when sending
+            reply_to_id=reply_to_id,  # Reply feature
         )
     else:
         # Server-side encryption (legacy support)
@@ -469,6 +482,7 @@ def create_message(conversation_id: int):
             msg_Type="text",
             expiryTime=_message_expiry_for_user(sender),
             read_by_sender_at=datetime.utcnow(),  # Sender reads immediately when sending
+            reply_to_id=reply_to_id,  # Reply feature
         )
 
     db.session.add(message)
@@ -562,4 +576,164 @@ def toggle_save_message(conversation_id: int, message_id: int):
     return jsonify({
         "message": message.to_dict(current_user_id),
         "saved": current_user_saved,
+    }), 200
+
+
+@conversations_bp.patch("/<int:conversation_id>/messages/<int:message_id>/edit")
+@jwt_required()
+def edit_message(conversation_id: int, message_id: int):
+    """
+    Edit a message's content.
+
+    Only the sender can edit their own messages.
+    The receiver will see the updated content and an '(edited)' indicator.
+    """
+    current_user_id = _current_user_id()
+    payload = request.get_json(silent=True) or {}
+
+    # Get the message
+    message = Message.query.get(message_id)
+    if not message:
+        return jsonify({"message": "Message not found."}), 404
+
+    # Only the sender can edit their message
+    if message.senderID != current_user_id:
+        return jsonify({"message": "You can only edit your own messages."}), 403
+
+    # Cannot edit unsent messages
+    if message.is_unsent:
+        return jsonify({"message": "Cannot edit an unsent message."}), 400
+
+    # Check if client sent pre-encrypted edited content
+    is_encrypted = payload.get("encrypted", False)
+
+    if is_encrypted:
+        # Client-side encryption - use pre-encrypted data directly
+        encrypted_content = payload.get("encryptedContent", "")
+        iv = payload.get("iv", "")
+        recipient_encrypted_key = payload.get("recipientEncryptedKey", "")
+        recipient_ephemeral_key = payload.get("recipientEphemeralKey", "")
+        sender_encrypted_key = payload.get("senderEncryptedKey", "")
+        sender_ephemeral_key = payload.get("senderEphemeralKey", "")
+
+        if not all([encrypted_content, iv, recipient_encrypted_key, recipient_ephemeral_key,
+                    sender_encrypted_key, sender_ephemeral_key]):
+            return jsonify({"message": "Missing encryption fields."}), 400
+
+        # Update encrypted content
+        message.encryptedContent = encrypted_content
+        message.iv = iv
+        message.encrypted_aes_key = recipient_encrypted_key
+        message.ephemeral_public_key = recipient_ephemeral_key
+        message.sender_encrypted_content = encrypted_content
+        message.sender_iv = iv
+        message.sender_encrypted_aes_key = sender_encrypted_key
+        message.sender_ephemeral_public_key = sender_ephemeral_key
+    else:
+        # Server-side encryption (legacy support)
+        content = (payload.get("content") or "").strip()
+
+        if not content:
+            return jsonify({"message": "Message content is required."}), 400
+
+        if len(content) > 2000:
+            return jsonify({"message": "Message must not exceed 2000 characters."}), 400
+
+        # Fetch recipient's public key for encryption
+        recipient_public_key = PublicKey.query.filter_by(userID=conversation_id).first()
+        if not recipient_public_key:
+            return jsonify({"message": "Recipient's encryption key not found."}), 404
+
+        # Fetch sender's public key
+        sender_public_key = PublicKey.query.filter_by(userID=current_user_id).first()
+        if not sender_public_key:
+            return jsonify({"message": "Your encryption key not found."}), 404
+
+        # Encrypt the message twice
+        try:
+            recipient_encrypted = encrypt_message_for_user(content, recipient_public_key.publicKey)
+            sender_encrypted = encrypt_message_for_user(content, sender_public_key.publicKey)
+        except Exception as e:
+            return jsonify({"message": f"Encryption failed: {str(e)}"}), 500
+
+        # Update encrypted content
+        message.encryptedContent = recipient_encrypted['encrypted_content']
+        message.iv = recipient_encrypted['iv']
+        message.hmac = recipient_encrypted['auth_tag']
+        message.encrypted_aes_key = recipient_encrypted['encrypted_aes_key']
+        message.ephemeral_public_key = recipient_encrypted['ephemeral_public_key']
+        message.sender_encrypted_content = sender_encrypted['encrypted_content']
+        message.sender_iv = sender_encrypted['iv']
+        message.sender_hmac = sender_encrypted['auth_tag']
+        message.sender_encrypted_aes_key = sender_encrypted['encrypted_aes_key']
+        message.sender_ephemeral_public_key = sender_encrypted['ephemeral_public_key']
+
+    # Mark as edited
+    message.edited_at = datetime.utcnow()
+
+    db.session.commit()
+
+    # Notify receiver via WebSocket
+    emit_message_edited(conversation_id, {
+        "messageId": message_id,
+        "message": message.to_dict(conversation_id),
+        "conversationId": current_user_id,
+    })
+
+    return jsonify({"message": message.to_dict(current_user_id)}), 200
+
+
+@conversations_bp.patch("/<int:conversation_id>/messages/<int:message_id>/unsend")
+@jwt_required()
+def unsend_message(conversation_id: int, message_id: int):
+    """
+    Unsend a message.
+
+    Only the sender can unsend their own messages.
+    The message content is cleared and replaced with a placeholder for the receiver.
+    The placeholder auto-deletes after 24 hours.
+    """
+    current_user_id = _current_user_id()
+
+    # Get the message
+    message = Message.query.get(message_id)
+    if not message:
+        return jsonify({"message": "Message not found."}), 404
+
+    # Only the sender can unsend their message
+    if message.senderID != current_user_id:
+        return jsonify({"message": "You can only unsend your own messages."}), 403
+
+    # Cannot unsend already unsent messages
+    if message.is_unsent:
+        return jsonify({"message": "Message already unsent."}), 400
+
+    # Mark as unsent and clear content
+    message.is_unsent = True
+    message.unsent_at = datetime.utcnow()
+
+    # Clear encrypted content (keep metadata for the placeholder)
+    message.encryptedContent = ""
+    message.sender_encrypted_content = ""
+
+    # Set the message to be soft-deleted for sender immediately
+    message.deleted_for_sender = True
+
+    # Set expiry for the unsent placeholder (24 hours from now)
+    message.expiryTime = datetime.utcnow() + timedelta(hours=24)
+
+    db.session.commit()
+
+    # Notify receiver via WebSocket
+    sender = User.query.get(current_user_id)
+    emit_message_unsent(conversation_id, {
+        "messageId": message_id,
+        "senderUsername": sender.username if sender else "Unknown",
+        "unsentAt": message.unsent_at.isoformat(),
+        "conversationId": current_user_id,
+    })
+
+    return jsonify({
+        "message": "Message unsent successfully.",
+        "messageId": message_id,
     }), 200

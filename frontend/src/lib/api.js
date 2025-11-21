@@ -125,4 +125,22 @@ export const api = {
     request("/settings/profile-picture", { method: "POST", token, body: { imageData } }),
   deleteProfilePicture: (token) =>
     request("/settings/profile-picture", { method: "DELETE", token }),
+  // Message edit, unsend, and reply
+  editMessage: (token, conversationId, messageId, encryptedData) =>
+    request(`/conversations/${conversationId}/messages/${messageId}/edit`, {
+      method: "PATCH",
+      token,
+      body: { encrypted: true, ...encryptedData },
+    }),
+  unsendMessage: (token, conversationId, messageId) =>
+    request(`/conversations/${conversationId}/messages/${messageId}/unsend`, {
+      method: "PATCH",
+      token,
+    }),
+  sendMessageWithReply: (token, conversationId, encryptedData, replyToId) =>
+    request(`/conversations/${conversationId}/messages`, {
+      method: "POST",
+      token,
+      body: { encrypted: true, ...encryptedData, replyToId },
+    }),
 };

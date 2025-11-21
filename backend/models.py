@@ -379,16 +379,49 @@ class Message(db.Model):
     deleted_for_sender = db.Column(db.Boolean, default=False, nullable=False, index=True)
     deleted_for_receiver = db.Column(db.Boolean, default=False, nullable=False, index=True)
 
+    # Edit and unsend features
+    edited_at = db.Column(db.DateTime, nullable=True)  # When message was edited
+    is_unsent = db.Column(db.Boolean, default=False, nullable=False)  # Whether message was unsent
+    unsent_at = db.Column(db.DateTime, nullable=True)  # When message was unsent
+
+    # Reply feature - reference to parent message
+    reply_to_id = db.Column(
+        db.Integer,
+        db.ForeignKey("message.msgID", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Relationships
     sender = db.relationship("User", foreign_keys=[senderID], back_populates="sent_messages")
     receiver = db.relationship(
         "User", foreign_keys=[receiverID], back_populates="received_messages"
     )
     group = db.relationship("GroupChat", back_populates="messages")
+    reply_to = db.relationship("Message", remote_side=[msgID], foreign_keys=[reply_to_id])
 
     def is_expired(self) -> bool:
         """Check if message has expired."""
         return datetime.utcnow() > self.expiryTime
+
+    def _get_reply_preview(self, current_user_id: int | None = None) -> dict[str, object] | None:
+        """Get a preview of the replied-to message."""
+        if not self.reply_to:
+            return None
+
+        reply_msg = self.reply_to
+        is_reply_sender = reply_msg.senderID == current_user_id if current_user_id else False
+
+        return {
+            "id": reply_msg.msgID,
+            "senderID": reply_msg.senderID,
+            "senderUsername": reply_msg.sender.username if reply_msg.sender else None,
+            "isUnsent": reply_msg.is_unsent,
+            # Return appropriate encrypted content based on who's requesting
+            "encryptedContent": reply_msg.sender_encrypted_content if is_reply_sender and reply_msg.sender_encrypted_content else reply_msg.encryptedContent,
+            "iv": reply_msg.sender_iv if is_reply_sender and reply_msg.sender_iv else reply_msg.iv,
+            "hmac": reply_msg.sender_hmac if is_reply_sender and reply_msg.sender_hmac else reply_msg.hmac,
+        }
 
     def to_dict(self, current_user_id: int | None = None) -> dict[str, object]:
         """Serialize message for API response."""
@@ -415,6 +448,13 @@ class Message(db.Model):
             "saved": saved_by_current_user,  # Per-user saved status
             "readBySenderAt": self.read_by_sender_at.isoformat() if self.read_by_sender_at else None,
             "readByReceiverAt": self.read_by_receiver_at.isoformat() if self.read_by_receiver_at else None,
+            # Edit and unsend fields
+            "editedAt": self.edited_at.isoformat() if self.edited_at else None,
+            "isUnsent": self.is_unsent,
+            "unsentAt": self.unsent_at.isoformat() if self.unsent_at else None,
+            # Reply fields
+            "replyToId": self.reply_to_id,
+            "replyTo": self._get_reply_preview(current_user_id) if self.reply_to_id else None,
         }
 
         # If user is the sender, return sender's encrypted copy

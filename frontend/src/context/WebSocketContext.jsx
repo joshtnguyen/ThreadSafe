@@ -19,6 +19,8 @@ export function WebSocketProvider({ children }) {
   const unblockedHandlersRef = useRef([]);
   const messageStatusHandlersRef = useRef([]);
   const messageDeletedHandlersRef = useRef([]);
+  const messageEditedHandlersRef = useRef([]);
+  const messageUnsentHandlersRef = useRef([]);
 
   useEffect(() => {
     // Only connect if user is logged in
@@ -115,6 +117,16 @@ export function WebSocketProvider({ children }) {
       messageDeletedHandlersRef.current.forEach((handler) => handler(data));
     });
 
+    newSocket.on("message_edited_event", (data) => {
+      console.log("Message edited event received:", data);
+      messageEditedHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("message_unsent_event", (data) => {
+      console.log("Message unsent event received:", data);
+      messageUnsentHandlersRef.current.forEach((handler) => handler(data));
+    });
+
     setSocket(newSocket);
 
     return () => {
@@ -190,6 +202,20 @@ export function WebSocketProvider({ children }) {
     };
   };
 
+  const onMessageEdited = (handler) => {
+    messageEditedHandlersRef.current = [...messageEditedHandlersRef.current, handler];
+    return () => {
+      messageEditedHandlersRef.current = messageEditedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onMessageUnsent = (handler) => {
+    messageUnsentHandlersRef.current = [...messageUnsentHandlersRef.current, handler];
+    return () => {
+      messageUnsentHandlersRef.current = messageUnsentHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
   const value = {
     socket,
     isConnected,
@@ -202,6 +228,8 @@ export function WebSocketProvider({ children }) {
     onUserUnblocked,
     onMessageStatusUpdate,
     onMessageDeleted,
+    onMessageEdited,
+    onMessageUnsent,
   };
 
   return (

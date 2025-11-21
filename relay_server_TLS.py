@@ -250,6 +250,32 @@ def relay_message_deleted_http():
     return jsonify({'status': 'ok'}), 200
 
 
+@app.post('/relay/message-edited')
+def relay_message_edited_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    receiver_id = data.get('receiverId')
+    edit_data = data.get('editData')
+    if not receiver_id or not edit_data:
+        return jsonify({'message': 'receiverId and editData required'}), 400
+    print(f'Emitting message_edited_event to user_{receiver_id}: message {edit_data.get("messageId")}')
+    socketio.emit('message_edited_event', edit_data, room=f'user_{receiver_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/message-unsent')
+def relay_message_unsent_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    receiver_id = data.get('receiverId')
+    unsent_data = data.get('unsentData')
+    if not receiver_id or not unsent_data:
+        return jsonify({'message': 'receiverId and unsentData required'}), 400
+    print(f'Emitting message_unsent_event to user_{receiver_id}: message {unsent_data.get("messageId")}')
+    socketio.emit('message_unsent_event', unsent_data, room=f'user_{receiver_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
 if __name__ == '__main__':
     print('Starting TLS Relay Server on port 5001...')
     socketio.run(app, host='0.0.0.0', port=5001, debug=True)

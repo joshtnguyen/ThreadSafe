@@ -248,6 +248,58 @@ input {
   align-items: center;
   justify-content: center;
   font-size: 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.info-icon:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.info-icon-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.info-tooltip {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 280px;
+  padding: 14px 16px;
+  background: var(--panel-dark);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  z-index: 100;
+}
+
+.info-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 8px solid transparent;
+  border-top-color: var(--panel-dark);
+}
+
+.info-icon-wrapper:hover .info-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.info-tooltip strong {
+  color: var(--accent);
 }
 
 .form-error {
@@ -1070,10 +1122,11 @@ input {
 
 .message-bubble {
   max-width: 62%;
-  min-width: 120px;
-  padding: 8px 10px;
+  min-width: 180px;
+  width: fit-content;
+  padding: 8px 12px;
   border-radius: 15px;
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   background: var(--bubble-bg);
   color: var(--bubble-text);
@@ -1086,6 +1139,10 @@ input {
   background: var(--bubble-own-bg);
   color: var(--bubble-own-text);
   border: 1px solid var(--bubble-own-border);
+}
+
+.message-bubble.their {
+  margin-right: auto;
 }
 
 .bubble-meta {
@@ -1267,6 +1324,80 @@ input {
 /* Light mode character counter */
 :root[data-theme="light"] .character-counter {
   color: rgba(0, 0, 0, 0.5);
+}
+
+/* Context Menu */
+.context-menu {
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.context-menu-item:hover {
+  background: var(--panel-soft);
+}
+
+/* Unsent message placeholder */
+.message-bubble.unsent-placeholder {
+  background: transparent;
+  border: 1px dashed var(--text-muted);
+  opacity: 0.6;
+}
+
+.message-bubble.unsent-placeholder .bubble-text {
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+/* Edited indicator */
+.bubble-time span[style*="italic"] {
+  opacity: 0.7;
+}
+
+/* Reply preview in composer */
+.reply-preview-composer {
+  animation: slideUp 0.2s ease;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Reply preview in message bubble */
+.reply-preview-bubble {
+  background: rgba(255, 255, 255, 0.05);
+  border-left: 3px solid var(--text-muted);
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+:root[data-theme="light"] .reply-preview-bubble {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* Edit mode textarea */
+.edit-textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: var(--input-bg);
+  color: var(--input-color);
+  resize: vertical;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.edit-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .bottom-tab-bar {

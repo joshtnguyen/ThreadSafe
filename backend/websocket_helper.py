@@ -70,3 +70,13 @@ def emit_message_deleted(user_id: int, message_id: int, conversation_id: int):
         "messageId": message_id,
         "conversationId": conversation_id
     })
+
+
+def emit_message_edited(receiver_id: int, edit_data: dict):
+    """Emit a message edited notification to the receiver."""
+    _post("/relay/message-edited", {"receiverId": receiver_id, "editData": edit_data})
+
+
+def emit_message_unsent(receiver_id: int, unsent_data: dict):
+    """Emit a message unsent notification to the receiver."""
+    _post("/relay/message-unsent", {"receiverId": receiver_id, "unsentData": unsent_data})

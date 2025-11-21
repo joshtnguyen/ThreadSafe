@@ -43,6 +43,10 @@ def cleanup_expired_messages() -> dict:
     for message in messages_to_check:
         modified = False
 
+        # Skip unsent messages - they are handled by cleanup_unsent_placeholders()
+        if message.is_unsent:
+            continue
+
         # Get sender and receiver
         sender = User.query.get(message.senderID)
         receiver = User.query.get(message.receiverID)
@@ -144,4 +148,47 @@ def cleanup_expired_messages() -> dict:
         "messages_modified": messages_modified,
         "timestamp": now.isoformat(),
         "checked_count": len(messages_to_check),
+    }
+
+
+def cleanup_unsent_placeholders() -> dict:
+    """
+    Remove unsent message placeholders that are older than 24 hours.
+
+    When a user unsends a message:
+    - The message is immediately deleted for the sender
+    - The receiver sees a placeholder: "username unsent a message"
+    - After 24 hours, this placeholder should be removed
+
+    Returns:
+        dict: Statistics about deleted placeholder messages
+    """
+    now = datetime.utcnow()
+    deleted_count = 0
+
+    # Find all unsent messages that are more than 24 hours old
+    expiry_threshold = now - timedelta(hours=24)
+
+    unsent_messages = Message.query.filter(
+        Message.is_unsent == True,
+        Message.unsent_at != None,
+        Message.unsent_at < expiry_threshold
+    ).all()
+
+    print(f"Found {len(unsent_messages)} unsent message placeholders older than 24 hours")
+
+    for message in unsent_messages:
+        # Notify the receiver that the unsent placeholder is being removed
+        emit_message_deleted(message.receiverID, message.msgID, message.senderID)
+
+        # Delete the message
+        db.session.delete(message)
+        deleted_count += 1
+
+    if deleted_count > 0:
+        db.session.commit()
+
+    return {
+        "deleted_placeholder_count": deleted_count,
+        "timestamp": now.isoformat(),
     }

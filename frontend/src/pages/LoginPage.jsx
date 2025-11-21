@@ -136,12 +136,20 @@ export default function LoginPage() {
         <p className="auth-footer">
           Don&apos;t have an account? <Link to="/register">Register here</Link>
         </p>
-        <p className="auth-meta">
+        <div className="auth-meta">
           <span>About the app</span>
-          <span className="info-icon" aria-hidden>
-            i
-          </span>
-        </p>
+          <div className="info-icon-wrapper">
+            <span className="info-icon" aria-hidden>
+              i
+            </span>
+            <div className="info-tooltip">
+              <strong>ThreadSafe</strong> is a secure messaging app with end-to-end encryption.
+              Your messages are encrypted on your device before being sent, ensuring only you
+              and your recipient can read them. Features include auto-deleting messages,
+              message editing, replies, and backup management.
+            </div>
+          </div>
+        </div>
       </section>
     </main>
   );
