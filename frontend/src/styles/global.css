@@ -522,6 +522,16 @@ input {
   font-size: 1rem;
 }
 
+/* Light mode logout button */
+:root[data-theme="light"] .sidebar-mini-logout {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-primary);
+}
+
+:root[data-theme="light"] .sidebar-mini-logout:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
+
 .sidebar-nav {
   flex: 1;
   overflow-y: auto;
