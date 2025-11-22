@@ -116,6 +116,19 @@ input {
   background: rgba(255, 255, 255, 0.25);
 }
 
+/* Light mode scrollbars */
+:root[data-theme="light"] ::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
+
 /* Truncated text with tooltip */
 .truncate-text {
   overflow: hidden;
@@ -532,6 +545,16 @@ input {
   background: rgba(255, 255, 255, 0.12);
 }
 
+/* Light mode sidebar icons (Friends, Settings) */
+:root[data-theme="light"] .sidebar-icon {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme="light"] .sidebar-icon.active,
+:root[data-theme="light"] .sidebar-icon:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
+
 .sidebar-icon-badge {
   position: absolute;
   top: 6px;
@@ -551,27 +574,29 @@ input {
 
 .sidebar-mini-logout {
   width: 100%;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  background: var(--panel-soft);
   border: none;
   color: var(--text-primary);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  font-size: 0.75rem;
-  padding: 8px 8px;
+  gap: 6px;
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 12px 8px;
   transition: background 0.2s ease;
   white-space: nowrap;
 }
 
 .sidebar-mini-logout:hover {
-  background: rgba(255, 255, 255, 0.16);
-  color: var(--accent);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .sidebar-mini-logout .logout-icon {
-  font-size: 1rem;
+  font-size: 1.4rem;
 }
 
 /* Light mode logout button */
@@ -1495,5 +1520,20 @@ input {
 
   .message-list {
     max-height: 60vh;
+  }
+
+  /* Fix friend dropdown position in stacked layout */
+  .friend-dropdown {
+    left: 35%;
+    transform: translateX(-50%);
+    top: calc(100% + 4px);
+    right: auto;
+    width: min(360px, 90vw);
+    max-height: 70vh;
+  }
+
+  .friend-dropdown-scroll {
+    max-height: calc(70vh - 16px);
+    padding-bottom: 30px;
   }
 }

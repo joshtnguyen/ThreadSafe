@@ -100,6 +100,7 @@ export default function ChatPage() {
     messageRetentionHours: String(user?.settings?.messageRetentionHours ?? 72),
     theme: user?.settings?.theme ?? theme ?? "dark",
   }));
+  const [originalTheme, setOriginalTheme] = useState(theme); // Store original theme for cancel
   const [isUploadingProfilePic, setIsUploadingProfilePic] = useState(false);
 
   // Edit, unsend, and reply states
@@ -1231,15 +1232,14 @@ export default function ChatPage() {
     // Add class to disable all transitions during theme change
     document.documentElement.classList.add('theme-changing');
 
-    // Apply theme to DOM INSTANTLY
+    // Apply theme to DOM INSTANTLY (preview only - not saved yet)
     document.documentElement.setAttribute('data-theme', safeTheme);
 
-    // Update React state (for persistence)
+    // Update form state only (not persisted until Save)
     setSettingsForm((prev) => ({
       ...prev,
       theme: safeTheme,
     }));
-    setTheme(safeTheme);
 
     // Remove transition-disabling class after theme is applied
     // Use double RAF to ensure it happens after paint
@@ -1543,6 +1543,8 @@ export default function ChatPage() {
           className="settings-overlay"
           onClick={() => {
             if (!isSavingSettings) {
+              // Revert theme to original on cancel
+              document.documentElement.setAttribute('data-theme', originalTheme);
               setIsSettingsOpen(false);
             }
           }}
@@ -1559,7 +1561,11 @@ export default function ChatPage() {
               <button
                 type="button"
                 className="settings-close"
-                onClick={() => setIsSettingsOpen(false)}
+                onClick={() => {
+                  // Revert theme to original on close
+                  document.documentElement.setAttribute('data-theme', originalTheme);
+                  setIsSettingsOpen(false);
+                }}
                 aria-label="Close settings"
               >
                 ×
@@ -1629,7 +1635,11 @@ export default function ChatPage() {
                 <button
                   type="button"
                   className="ghost-button inline"
-                  onClick={() => setIsSettingsOpen(false)}
+                  onClick={() => {
+                    // Revert theme to original on cancel
+                    document.documentElement.setAttribute('data-theme', originalTheme);
+                    setIsSettingsOpen(false);
+                  }}
                   disabled={isSavingSettings}
                 >
                   Cancel
@@ -1846,6 +1856,7 @@ export default function ChatPage() {
             title="Settings"
             onClick={() => {
               setSettingsError("");
+              setOriginalTheme(theme); // Store current theme for cancel
               setIsSettingsOpen(true);
             }}
           >
@@ -1855,7 +1866,11 @@ export default function ChatPage() {
           <button
             type="button"
             className="sidebar-mini-logout"
-            onClick={logout}
+            onClick={() => {
+              // Reset theme to dark mode on logout (branded login page)
+              setTheme('dark');
+              logout();
+            }}
             title="Log out"
           >
             <span className="logout-icon" aria-hidden>
