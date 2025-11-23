@@ -89,6 +89,12 @@ def cleanup_expired_messages() -> dict:
                         soft_deleted_count += 1
                         # Notify sender that message is deleted on their side
                         emit_message_deleted(message.senderID, message.msgID, message.receiverID)
+                        # Also delete for receiver once sender's retention expires (unless saved by receiver)
+                        if not message.deleted_for_receiver and not message.saved_by_receiver:
+                            print(f"    -> Also deleting for RECEIVER {receiver.username} (sender retention hit)")
+                            message.deleted_for_receiver = True
+                            soft_deleted_count += 1
+                            emit_message_deleted(message.receiverID, message.msgID, message.senderID)
 
             # Check receiver's deletion time
             if not message.deleted_for_receiver:
