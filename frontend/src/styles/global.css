@@ -1524,16 +1524,19 @@ input {
 
   /* Fix friend dropdown position in stacked layout */
   .friend-dropdown {
-    left: 35%;
+    position: fixed;
+    left: 50%;
     transform: translateX(-50%);
-    top: calc(100% + 4px);
+    top: 84px;
     right: auto;
-    width: min(360px, 90vw);
-    max-height: 70vh;
+    width: min(420px, 92vw);
+    max-height: calc(100vh - 140px);
+    margin: 0 auto;
+    z-index: 60;
   }
 
   .friend-dropdown-scroll {
-    max-height: calc(70vh - 16px);
+    max-height: calc(100vh - 168px);
     padding-bottom: 30px;
   }
 }
