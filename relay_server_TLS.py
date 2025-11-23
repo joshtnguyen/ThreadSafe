@@ -276,6 +276,25 @@ def relay_message_unsent_http():
     return jsonify({'status': 'ok'}), 200
 
 
+@app.post('/relay/message-saved')
+def relay_message_saved_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    receiver_id = data.get('receiverId')
+    message_id = data.get('messageId')
+    conversation_id = data.get('conversationId')
+    saved = data.get('saved')
+    if not receiver_id or message_id is None or conversation_id is None or saved is None:
+        return jsonify({'message': 'receiverId, messageId, conversationId, and saved required'}), 400
+    print(f'Emitting message_saved_event to user_{receiver_id}: message {message_id} saved={saved}')
+    socketio.emit('message_saved_event', {
+        'messageId': message_id,
+        'conversationId': conversation_id,
+        'saved': saved
+    }, room=f'user_{receiver_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
 if __name__ == '__main__':
     print('Starting TLS Relay Server on port 5001...')
     socketio.run(app, host='0.0.0.0', port=5001, debug=True)

@@ -428,8 +428,8 @@ class Message(db.Model):
         # Return appropriate encrypted version based on who's requesting
         is_sender = self.senderID == current_user_id if current_user_id else False
 
-        # Determine if current user has saved this message
-        saved_by_current_user = self.saved_by_sender if is_sender else self.saved_by_receiver
+        # Shared saved state: if either participant saved the message, it is considered saved for both
+        saved_by_current_user = self.saved_by_sender or self.saved_by_receiver
 
         result = {
             "id": self.msgID,

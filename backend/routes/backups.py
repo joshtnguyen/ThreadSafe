@@ -74,17 +74,17 @@ def delete_backup(message_id: int):
     # Determine if user is sender or receiver
     is_sender = message.senderID == current_user_id
 
-    # Check if message is actually saved by this user
-    is_saved = message.saved_by_sender if is_sender else message.saved_by_receiver
+    # Check if message is actually saved (shared state)
+    is_saved = message.saved_by_sender or message.saved_by_receiver
     if not is_saved:
         return jsonify({"message": "Message is not in your backups."}), 400
 
-    # Un-star and immediately delete for this user
+    # Un-star for both and immediately delete for this user
+    message.saved_by_sender = False
+    message.saved_by_receiver = False
     if is_sender:
-        message.saved_by_sender = False
         message.deleted_for_sender = True
     else:
-        message.saved_by_receiver = False
         message.deleted_for_receiver = True
 
     # Emit WebSocket event to notify user that message is deleted

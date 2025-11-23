@@ -54,6 +54,9 @@ def cleanup_expired_messages() -> dict:
         if not sender or not receiver:
             continue
 
+        # Shared saved flag: if either user saved, treat as saved for both
+        is_saved = bool(message.saved_by_sender or message.saved_by_receiver)
+
         # Get sender's retention setting (in hours). Receiver's timer should not delete incoming messages.
         sender_retention_hours = sender.settings.get('messageRetentionHours', 24) if sender.settings else 24
 
@@ -77,22 +80,17 @@ def cleanup_expired_messages() -> dict:
             print(f"    Sender-driven deletion in {time_until_sender_delete:.1f}s (start time: {sender_start_time})")
 
             if now >= sender_deletion_time:
-                # Delete for sender unless they saved the message
-                if not message.deleted_for_sender:
-                    if message.saved_by_sender:
-                        print(f"    Sender has saved this message - skipping deletion for sender")
-                    else:
+                if is_saved:
+                    print("    Message is saved - skipping deletion for both users")
+                else:
+                    if not message.deleted_for_sender:
                         print(f"    -> Deleting for SENDER {sender.username}")
                         message.deleted_for_sender = True
                         modified = True
                         soft_deleted_count += 1
                         emit_message_deleted(message.senderID, message.msgID, message.receiverID)
 
-                # Delete for receiver using sender's timer (unless either party saved)
-                if not message.saved_by_sender and not message.deleted_for_receiver:
-                    if message.saved_by_receiver:
-                        print(f"    Receiver has saved this message - skipping deletion for receiver")
-                    else:
+                    if not message.deleted_for_receiver:
                         print(f"    -> Deleting for RECEIVER {receiver.username} (sender retention hit)")
                         message.deleted_for_receiver = True
                         modified = True
@@ -105,16 +103,19 @@ def cleanup_expired_messages() -> dict:
             print(f"    -> Using 24-hour fallback (expires in {time_until_fallback:.1f}s)")
 
             if now >= fallback_deletion_time:
-                if not message.deleted_for_sender:
-                    message.deleted_for_sender = True
-                    modified = True
-                    soft_deleted_count += 1
-                    emit_message_deleted(message.senderID, message.msgID, message.receiverID)
-                if not message.deleted_for_receiver:
-                    message.deleted_for_receiver = True
-                    modified = True
-                    soft_deleted_count += 1
-                    emit_message_deleted(message.receiverID, message.msgID, message.senderID)
+                if is_saved:
+                    print("    Message is saved - skipping fallback deletion for both users")
+                else:
+                    if not message.deleted_for_sender:
+                        message.deleted_for_sender = True
+                        modified = True
+                        soft_deleted_count += 1
+                        emit_message_deleted(message.senderID, message.msgID, message.receiverID)
+                    if not message.deleted_for_receiver:
+                        message.deleted_for_receiver = True
+                        modified = True
+                        soft_deleted_count += 1
+                        emit_message_deleted(message.receiverID, message.msgID, message.senderID)
 
         # Actually delete if both users have marked it deleted
         if message.deleted_for_sender and message.deleted_for_receiver:

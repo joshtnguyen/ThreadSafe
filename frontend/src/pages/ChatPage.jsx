@@ -61,6 +61,7 @@ export default function ChatPage() {
     onMessageDeleted,
     onMessageEdited,
     onMessageUnsent,
+    onMessageSaved,
   } = useWebSocket();
 
   const [conversations, setConversations] = useState([]);
@@ -674,6 +675,29 @@ export default function ChatPage() {
     });
     return unsubscribe;
   }, [onMessageUnsent]);
+
+  // Listen for message saved/unsaved events
+  useEffect(() => {
+    const unsubscribe = onMessageSaved(({ messageId, conversationId, saved }) => {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId ? { ...msg, saved } : msg
+        )
+      );
+
+      setConversations((prev) =>
+        prev.map((conv) => {
+          if (conv.id !== conversationId) return conv;
+          if (conv.lastMessage?.id !== messageId) return conv;
+          return {
+            ...conv,
+            lastMessage: { ...conv.lastMessage, saved },
+          };
+        })
+      );
+    });
+    return unsubscribe;
+  }, [onMessageSaved]);
 
   // Listen for block/unblock events targeting current user
   useEffect(() => {

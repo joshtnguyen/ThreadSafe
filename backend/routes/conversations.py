@@ -8,7 +8,7 @@ from sqlalchemy import and_, func, or_
 
 from ..database import db
 from ..models import Contact, Message, User, PublicKey
-from ..websocket_helper import emit_new_message, emit_message_edited, emit_message_unsent
+from ..websocket_helper import emit_new_message, emit_message_edited, emit_message_unsent, emit_message_saved
 from ..encryption.message_crypto import encrypt_message_for_user
 
 conversations_bp = Blueprint("conversations", __name__)
@@ -543,10 +543,10 @@ def update_message_status(conversation_id: int, message_id: int):
 @jwt_required()
 def toggle_save_message(conversation_id: int, message_id: int):
     """
-    Toggle save status for a message (per-user).
+    Toggle save status for a message (shared between participants).
 
-    Saved messages are exempt from auto-deletion and kept forever for the user who saved them.
-    Each user can independently save messages they want to preserve.
+    Saved messages are exempt from auto-deletion and kept forever for both users.
+    When one user saves/unsaves, the state mirrors for the other participant.
     """
     current_user_id = _current_user_id()
     payload = request.get_json(silent=True) or {}
@@ -561,21 +561,22 @@ def toggle_save_message(conversation_id: int, message_id: int):
     if message.senderID != current_user_id and message.receiverID != current_user_id:
         return jsonify({"message": "You can only save your own messages."}), 403
 
-    # Update per-user saved status
+    # Shared save: mirror state for both sides
     is_sender = message.senderID == current_user_id
-    if is_sender:
-        message.saved_by_sender = bool(saved)
-    else:
-        message.saved_by_receiver = bool(saved)
+    message.saved_by_sender = bool(saved)
+    message.saved_by_receiver = bool(saved)
 
     db.session.commit()
 
-    # Get the current user's saved status for the response
-    current_user_saved = message.saved_by_sender if is_sender else message.saved_by_receiver
+    # Notify both participants so all clients stay in sync
+    other_user_id = message.receiverID if is_sender else message.senderID
+    other_conversation_id = current_user_id  # For the other participant, the conversation is with the current user
+    emit_message_saved(other_user_id, message.msgID, other_conversation_id, bool(saved))
+    emit_message_saved(current_user_id, message.msgID, conversation_id, bool(saved))
 
     return jsonify({
         "message": message.to_dict(current_user_id),
-        "saved": current_user_saved,
+        "saved": bool(saved),
     }), 200
 
 

@@ -21,6 +21,7 @@ export function WebSocketProvider({ children }) {
   const messageDeletedHandlersRef = useRef([]);
   const messageEditedHandlersRef = useRef([]);
   const messageUnsentHandlersRef = useRef([]);
+  const messageSavedHandlersRef = useRef([]);
 
   useEffect(() => {
     // Only connect if user is logged in
@@ -127,6 +128,11 @@ export function WebSocketProvider({ children }) {
       messageUnsentHandlersRef.current.forEach((handler) => handler(data));
     });
 
+    newSocket.on("message_saved_event", (data) => {
+      console.log("Message saved event received:", data);
+      messageSavedHandlersRef.current.forEach((handler) => handler(data));
+    });
+
     setSocket(newSocket);
 
     return () => {
@@ -216,6 +222,13 @@ export function WebSocketProvider({ children }) {
     };
   };
 
+  const onMessageSaved = (handler) => {
+    messageSavedHandlersRef.current = [...messageSavedHandlersRef.current, handler];
+    return () => {
+      messageSavedHandlersRef.current = messageSavedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
   const value = {
     socket,
     isConnected,
@@ -230,6 +243,7 @@ export function WebSocketProvider({ children }) {
     onMessageDeleted,
     onMessageEdited,
     onMessageUnsent,
+    onMessageSaved,
   };
 
   return (
