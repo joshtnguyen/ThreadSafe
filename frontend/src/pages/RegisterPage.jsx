@@ -120,7 +120,7 @@ export default function RegisterPage() {
         </div>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label className="field">
-            <span className="field-label">Full Name</span>
+            <span className="field-label">Display Name</span>
             <input
               name="displayName"
               value={form.displayName}

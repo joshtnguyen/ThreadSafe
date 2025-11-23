@@ -866,7 +866,21 @@ export default function ChatPage() {
       await api.unsendMessage(token, selectedId, messageId);
 
       // Remove message from local state (it's deleted for sender)
-      setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
+      setMessages((prev) => {
+        const filtered = prev.filter((msg) => msg.id !== messageId);
+
+        // Update conversation's lastMessage to the previous message (or null)
+        const previousMessage = filtered.length > 0 ? filtered[filtered.length - 1] : null;
+        setConversations((convs) =>
+          convs.map((conv) =>
+            conv.id === selectedId
+              ? { ...conv, lastMessage: previousMessage }
+              : conv
+          )
+        );
+
+        return filtered;
+      });
 
       // Clear decrypted content
       setDecryptedMessages((prev) => {
@@ -2251,7 +2265,9 @@ export default function ChatPage() {
                   // Show decrypted preview if available, otherwise encrypted preview
                 const lastMsg = conversation.lastMessage;
                 const preview = lastMsg
-                  ? (decryptedMessages[lastMsg.id] || lastMsg.content || "Encrypted message")
+                  ? (lastMsg.isUnsent
+                    ? "Message was unsent"
+                    : (decryptedMessages[lastMsg.id] || lastMsg.content || "Encrypted message"))
                   : "No messages yet.";
                   return (
                     <div

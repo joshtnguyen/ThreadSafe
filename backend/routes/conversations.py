@@ -720,8 +720,8 @@ def unsend_message(conversation_id: int, message_id: int):
     # Set the message to be soft-deleted for sender immediately
     message.deleted_for_sender = True
 
-    # Set expiry for the unsent placeholder (24 hours from now)
-    message.expiryTime = datetime.utcnow() + timedelta(hours=24)
+    # Set expiry for the unsent placeholder (2 hours from now)
+    message.expiryTime = datetime.utcnow() + timedelta(hours=2)
 
     db.session.commit()
 

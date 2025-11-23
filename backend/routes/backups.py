@@ -1,20 +1,30 @@
 """Backup management routes for saved messages."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from flask import Blueprint, jsonify
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from ..database import db
-from ..models import Message
-from ..websocket_helper import emit_message_deleted
+from ..models import Message, User
 
 backups_bp = Blueprint("backups", __name__)
+
+DEFAULT_RETENTION_HOURS = 72
 
 
 def _current_user_id() -> int:
     """Get current user ID from JWT token."""
     user_id = get_jwt_identity()
     return int(user_id)
+
+
+def _get_user_retention_hours(user: User) -> float:
+    """Get user's message retention hours from settings, or default."""
+    if user and user.settings and "messageRetentionHours" in user.settings:
+        return float(user.settings["messageRetentionHours"])
+    return DEFAULT_RETENTION_HOURS
 
 
 @backups_bp.get("")
@@ -53,12 +63,11 @@ def get_backups():
 @jwt_required()
 def delete_backup(message_id: int):
     """
-    Remove a message from backups (un-star) and immediately delete for current user.
+    Remove a message from backups (un-star) and reset auto-delete timer.
 
-    This implements Option 2: Un-star = Immediate Delete
-    - Removes the saved status for the current user
-    - Immediately marks the message as deleted for the current user
-    - The other user's saved/deleted status is unaffected
+    - Removes the saved status for both users
+    - Resets expiryTime to max of both users' retention settings
+    - Message will auto-delete when the new expiry time passes
     """
     current_user_id = _current_user_id()
 
@@ -71,35 +80,33 @@ def delete_backup(message_id: int):
     if message.senderID != current_user_id and message.receiverID != current_user_id:
         return jsonify({"message": "You can only delete your own backups."}), 403
 
-    # Determine if user is sender or receiver
-    is_sender = message.senderID == current_user_id
-
     # Check if message is actually saved (shared state)
     is_saved = message.saved_by_sender or message.saved_by_receiver
     if not is_saved:
         return jsonify({"message": "Message is not in your backups."}), 400
 
-    # Un-star for both and immediately delete for this user
+    # Get both users to check their retention settings
+    sender = User.query.get(message.senderID)
+    receiver = User.query.get(message.receiverID)
+
+    # Use the max of both users' retention hours
+    sender_hours = _get_user_retention_hours(sender)
+    receiver_hours = _get_user_retention_hours(receiver)
+    max_hours = max(sender_hours, receiver_hours)
+
+    # Un-star for both users
     message.saved_by_sender = False
     message.saved_by_receiver = False
-    if is_sender:
-        message.deleted_for_sender = True
-    else:
-        message.deleted_for_receiver = True
 
-    # Emit WebSocket event to notify user that message is deleted
-    other_user_id = message.receiverID if is_sender else message.senderID
-    emit_message_deleted(current_user_id, message.msgID, other_user_id)
-
-    # If both users have deleted, hard delete the message from database
-    if message.deleted_for_sender and message.deleted_for_receiver:
-        db.session.delete(message)
+    # Reset expiry time based on max retention setting
+    message.expiryTime = datetime.utcnow() + timedelta(hours=max_hours)
 
     db.session.commit()
 
     return jsonify({
-        "message": "Message removed from backups and deleted.",
+        "message": "Message removed from backups. It will auto-delete based on retention settings.",
         "messageId": message_id,
+        "expiresIn": f"{max_hours} hours",
     }), 200
 
 
