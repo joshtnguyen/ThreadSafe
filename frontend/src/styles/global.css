@@ -1483,7 +1483,10 @@ input {
 
   .sidebar {
     flex-direction: row;
-    justify-content: space-between;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
     border-radius: 24px;
     box-shadow: var(--shadow-soft);
   }
@@ -1493,6 +1496,7 @@ input {
     align-items: center;
     gap: 12px;
     min-width: 0;
+    width: 100%;
   }
 
   .sidebar-nav {
@@ -1505,6 +1509,36 @@ input {
   .chat-columns {
     grid-template-columns: 1fr;
     height: auto;
+  }
+
+  /* Evenly size the top-row items */
+  .sidebar-profile {
+    flex-direction: row;
+    align-items: center;
+    text-align: left;
+    gap: 10px;
+    width: auto;
+    flex: 1 1 220px;
+  }
+
+  .sidebar-profile h2,
+  .sidebar-profile p {
+    text-align: left;
+  }
+
+  .sidebar-icon,
+  .sidebar-mini-logout {
+    width: auto;
+    flex: 1 1 120px;
+    min-width: 0;
+  }
+
+  .sidebar-mini-logout {
+    display: none;
+  }
+
+  .sidebar-spacer {
+    display: none;
   }
 
   .conversation-list,

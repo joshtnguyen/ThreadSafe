@@ -1645,6 +1645,17 @@ export default function ChatPage() {
                   Cancel
                 </button>
                 <button
+                  type="button"
+                  className="ghost-button inline danger"
+                  onClick={() => {
+                    setTheme('dark'); // keep branded login theme on logout
+                    logout();
+                  }}
+                  disabled={isSavingSettings}
+                >
+                  Log out
+                </button>
+                <button
                   type="submit"
                   className="ghost-button inline primary"
                   disabled={isSavingSettings}
