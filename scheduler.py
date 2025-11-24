@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 
 from backend import create_app
-from backend.utils.cleanup_manager import cleanup_expired_messages, cleanup_unsent_placeholders
+from backend.utils.cleanup_manager import cleanup_expired_messages, cleanup_unsent_placeholders, cleanup_expired_group_messages
 
 
 def run_cleanup_job():
@@ -21,12 +21,19 @@ def run_cleanup_job():
     with app.app_context():
         print(f"\n[{datetime.utcnow().isoformat()}] Running cleanup job...")
 
-        # Cleanup expired messages
+        # Cleanup expired 1-1 messages
         result = cleanup_expired_messages()
-        print(f"  Hard deleted: {result['hard_deleted_count']} messages")
-        print(f"  Soft deleted: {result['soft_deleted_count']} messages")
-        print(f"  Total modified: {result['messages_modified']} messages")
-        print(f"  Checked: {result['checked_count']} messages")
+        print(f"  [1-1] Hard deleted: {result['hard_deleted_count']} messages")
+        print(f"  [1-1] Soft deleted: {result['soft_deleted_count']} messages")
+        print(f"  [1-1] Total modified: {result['messages_modified']} messages")
+        print(f"  [1-1] Checked: {result['checked_count']} messages")
+
+        # Cleanup expired group messages
+        group_result = cleanup_expired_group_messages()
+        print(f"  [GROUP] Hard deleted: {group_result['hard_deleted_count']} messages")
+        print(f"  [GROUP] Soft deleted: {group_result['soft_deleted_count']} messages")
+        print(f"  [GROUP] Total modified: {group_result['messages_modified']} messages")
+        print(f"  [GROUP] Checked: {group_result['checked_count']} messages")
 
         # Cleanup unsent message placeholders (24-hour expiry)
         unsent_result = cleanup_unsent_placeholders()

@@ -194,6 +194,19 @@ def relay_friend_rejected_http():
     return jsonify({'status': 'ok'}), 200
 
 
+@app.post('/relay/friend-request-cancelled')
+def relay_friend_request_cancelled_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    recipient_id = data.get('recipientId')
+    canceller_data = data.get('canceller')
+    if not recipient_id or not canceller_data:
+        return jsonify({'message': 'recipientId and canceller required'}), 400
+    print(f'Emitting friend_request_cancelled_event to user_{recipient_id} from: {canceller_data.get("username", "unknown")}')
+    socketio.emit('friend_request_cancelled_event', {'canceller': canceller_data}, room=f'user_{recipient_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
 @app.post('/relay/user-blocked')
 def relay_user_blocked_http():
     _verify_api_request()
@@ -292,6 +305,153 @@ def relay_message_saved_http():
         'conversationId': conversation_id,
         'saved': saved
     }, room=f'user_{receiver_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+# ============================================================================
+# GROUP CHAT RELAY ENDPOINTS
+# ============================================================================
+
+@app.post('/relay/group-created')
+def relay_group_created_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    member_id = data.get('memberId')
+    group_data = data.get('group')
+    if not member_id or not group_data:
+        return jsonify({'message': 'memberId and group required'}), 400
+    print(f'Emitting group_created_event to user_{member_id}')
+    socketio.emit('group_created_event', {'group': group_data}, room=f'user_{member_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/group-message')
+def relay_group_message_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    member_id = data.get('memberId')
+    message_data = data.get('data')
+    if not member_id or not message_data:
+        return jsonify({'message': 'memberId and data required'}), 400
+    print(f'Emitting group_message_received to user_{member_id}')
+    socketio.emit('group_message_received', message_data, room=f'user_{member_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/group-member-added')
+def relay_group_member_added_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    member_id = data.get('memberId')
+    member_data = data.get('data')
+    if not member_id or not member_data:
+        return jsonify({'message': 'memberId and data required'}), 400
+    print(f'Emitting group_member_added_event to user_{member_id}')
+    socketio.emit('group_member_added_event', member_data, room=f'user_{member_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/group-member-removed')
+def relay_group_member_removed_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    member_id = data.get('memberId')
+    remove_data = data.get('data')
+    if not member_id or not remove_data:
+        return jsonify({'message': 'memberId and data required'}), 400
+    print(f'Emitting group_member_removed_event to user_{member_id}')
+    socketio.emit('group_member_removed_event', remove_data, room=f'user_{member_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/group-deleted')
+def relay_group_deleted_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    member_id = data.get('memberId')
+    delete_data = data.get('data')
+    if not member_id or not delete_data:
+        return jsonify({'message': 'memberId and data required'}), 400
+    print(f'Emitting group_deleted_event to user_{member_id}')
+    socketio.emit('group_deleted_event', delete_data, room=f'user_{member_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/group-message-edited')
+def relay_group_message_edited_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    member_id = data.get('memberId')
+    edit_data = data.get('editData')
+    if not member_id or not edit_data:
+        return jsonify({'message': 'memberId and editData required'}), 400
+    print(f'Emitting group_message_edited_event to user_{member_id}')
+    socketio.emit('group_message_edited_event', edit_data, room=f'user_{member_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/group-message-unsent')
+def relay_group_message_unsent_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    member_id = data.get('memberId')
+    unsent_data = data.get('unsentData')
+    if not member_id or not unsent_data:
+        return jsonify({'message': 'memberId and unsentData required'}), 400
+    print(f'Emitting group_message_unsent_event to user_{member_id}')
+    socketio.emit('group_message_unsent_event', unsent_data, room=f'user_{member_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/group-message-read')
+def relay_group_message_read_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    sender_id = data.get('senderId')
+    read_data = data.get('readData')
+    if not sender_id or not read_data:
+        return jsonify({'message': 'senderId and readData required'}), 400
+    print(f'Emitting group_message_read_event to user_{sender_id}')
+    socketio.emit('group_message_read_event', read_data, room=f'user_{sender_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/group-key-rotated')
+def relay_group_key_rotated_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    member_id = data.get('memberId')
+    key_data = data.get('keyData')
+    if not member_id or not key_data:
+        return jsonify({'message': 'memberId and keyData required'}), 400
+    print(f'Emitting group_key_rotated_event to user_{member_id}')
+    socketio.emit('group_key_rotated_event', key_data, room=f'user_{member_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/group-message-deleted')
+def relay_group_message_deleted_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    member_id = data.get('memberId')
+    delete_data = data.get('deleteData')
+    if not member_id or not delete_data:
+        return jsonify({'message': 'memberId and deleteData required'}), 400
+    print(f'Emitting group_message_deleted_event to user_{member_id}')
+    socketio.emit('group_message_deleted_event', delete_data, room=f'user_{member_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
+@app.post('/relay/group-message-saved')
+def relay_group_message_saved_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    member_id = data.get('memberId')
+    save_data = data.get('saveData')
+    if not member_id or not save_data:
+        return jsonify({'message': 'memberId and saveData required'}), 400
+    print(f'Emitting group_message_saved_event to user_{member_id}')
+    socketio.emit('group_message_saved_event', save_data, room=f'user_{member_id}')
     return jsonify({'status': 'ok'}), 200
 
 

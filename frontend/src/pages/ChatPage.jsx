@@ -4,7 +4,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { useTheme } from "../context/ThemeContext.jsx";
 import { useWebSocket } from "../context/WebSocketContext.jsx";
 import { api } from "../lib/api.js";
-import { decryptMessageComplete, importPrivateKey, encryptMessageForRecipient, generateAESKey, encryptMessage, encryptAESKey } from "../lib/crypto.js";
+import { decryptMessageComplete, importPrivateKey, encryptMessageForRecipient, generateAESKey, encryptMessage, encryptAESKey, generateGroupKey, encryptGroupKeyForMembers, decryptGroupKey, encryptGroupMessage, decryptGroupMessage } from "../lib/crypto.js";
 import { getPrivateKey, getPublicKey } from "../lib/keyStorage.js";
 
 const parseTimestamp = (value) => {
@@ -55,6 +55,7 @@ export default function ChatPage() {
     onFriendRequestAccepted,
     onFriendDeleted,
     onFriendRequestRejected,
+    onFriendRequestCancelled,
     onUserBlocked,
     onUserUnblocked,
     onMessageStatusUpdate,
@@ -62,6 +63,18 @@ export default function ChatPage() {
     onMessageEdited,
     onMessageUnsent,
     onMessageSaved,
+    // Group chat handlers
+    onGroupCreated,
+    onGroupMessage,
+    onGroupMemberAdded,
+    onGroupMemberRemoved,
+    onGroupDeleted,
+    onGroupMessageEdited,
+    onGroupMessageUnsent,
+    onGroupMessageRead,
+    onGroupKeyRotated,
+    onGroupMessageDeleted,
+    onGroupMessageSaved,
   } = useWebSocket();
 
   const [conversations, setConversations] = useState([]);
@@ -111,6 +124,21 @@ export default function ChatPage() {
   const [replyingTo, setReplyingTo] = useState(null); // { id, senderUsername, content }
   const [isEditing, setIsEditing] = useState(false);
 
+  // Group chat states
+  const [groups, setGroups] = useState([]);
+  const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
+  const [createGroupForm, setCreateGroupForm] = useState({ name: "", memberIds: [], profilePic: null });
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const groupPicInputRef = useRef(null);
+  const [groupKeys, setGroupKeys] = useState({}); // { groupId: decryptedGroupKey }
+  const groupKeysRef = useRef({}); // Ref mirror for synchronous access
+  const selectedGroupIdRef = useRef(null); // Ref for synchronous access in WebSocket handlers
+  const [groupMenuOpen, setGroupMenuOpen] = useState(null); // Track which group's menu is open
+  const [groupMenuPosition, setGroupMenuPosition] = useState({ x: 0, y: 0 });
+  const [hoveredGroupMembers, setHoveredGroupMembers] = useState(null); // Track which group's member tooltip is shown
+  const [memberTooltipPosition, setMemberTooltipPosition] = useState({ x: 0, y: 0 });
+
   const messageEndRef = useRef(null);
   const friendDropdownRef = useRef(null);
   const friendIconRef = useRef(null);
@@ -124,6 +152,11 @@ export default function ChatPage() {
     const timeout = setTimeout(() => setToast(null), 3500);
     return () => clearTimeout(timeout);
   }, [toast]);
+
+  // Keep groupKeysRef in sync with groupKeys state for synchronous access
+  useEffect(() => {
+    groupKeysRef.current = groupKeys;
+  }, [groupKeys]);
 
   useEffect(() => {
     if (isSettingsOpen) {
@@ -181,6 +214,16 @@ export default function ChatPage() {
     [conversations, selectedId],
   );
 
+  const selectedGroup = useMemo(
+    () => groups.find((group) => group.groupChatID === selectedGroupId),
+    [groups, selectedGroupId],
+  );
+
+  // Keep selectedGroupIdRef in sync for WebSocket handlers
+  useEffect(() => {
+    selectedGroupIdRef.current = selectedGroupId;
+  }, [selectedGroupId]);
+
   // Load private key on mount
   useEffect(() => {
     async function loadPrivateKey() {
@@ -212,16 +255,18 @@ export default function ChatPage() {
       try {
         setToast(null);
         setIsLoading(true);
-        const [conversationResponse, friendResponse, requestsResponse, blockedResponse] = await Promise.all([
+        const [conversationResponse, friendResponse, requestsResponse, blockedResponse, groupsResponse] = await Promise.all([
           api.conversations(token),
           api.friends(token),
           api.friendRequests(token),
           api.blockedFriends(token),
+          api.getGroups(token),
         ]);
         if (!isMounted) {
           return;
         }
         setConversations(conversationResponse.conversations ?? []);
+        setGroups(groupsResponse.groups ?? []);
         const orderedFriends = (friendResponse.friends ?? []).sort((a, b) =>
           a.username.localeCompare(b.username),
         );
@@ -293,9 +338,102 @@ export default function ChatPage() {
     decryptConversationPreviews();
   }, [conversations, privateKey]);
 
+  // Decrypt group keys when groups are loaded
   useEffect(() => {
+    if (!privateKey || groups.length === 0) {
+      return;
+    }
+
+    async function decryptGroupKeys() {
+      const newKeys = {};
+
+      for (const group of groups) {
+        // Skip if we already have this key decrypted
+        if (groupKeys[group.groupChatID]) {
+          continue;
+        }
+
+        // Check if group has an encrypted key attached
+        if (group.encryptedGroupKey) {
+          try {
+            const decryptedKey = await decryptGroupKey(group.encryptedGroupKey, privateKey);
+            newKeys[group.groupChatID] = decryptedKey;
+          } catch (error) {
+            console.error(`Failed to decrypt key for group ${group.groupChatID}:`, error);
+          }
+        }
+      }
+
+      // Update all group keys at once (both ref and state)
+      if (Object.keys(newKeys).length > 0) {
+        Object.assign(groupKeysRef.current, newKeys);
+        setGroupKeys((prev) => ({
+          ...prev,
+          ...newKeys,
+        }));
+      }
+    }
+
+    decryptGroupKeys();
+  }, [groups, privateKey]);
+
+  // Decrypt group message previews when group keys are available
+  useEffect(() => {
+    if (Object.keys(groupKeys).length === 0 || groups.length === 0) {
+      return;
+    }
+
+    async function decryptGroupPreviews() {
+      const newDecryptions = {};
+
+      for (const group of groups) {
+        const lastMsg = group.lastMessage;
+        if (!lastMsg || lastMsg.isUnsent) {
+          continue;
+        }
+
+        // Skip if already decrypted
+        if (decryptedMessages[lastMsg.id]) {
+          continue;
+        }
+
+        // Get the group key
+        const groupKey = groupKeys[group.groupChatID];
+        if (!groupKey) {
+          continue;
+        }
+
+        // Check if message has encryption data
+        if (lastMsg.encryptedContent && lastMsg.iv) {
+          try {
+            const plaintext = await decryptGroupMessage(lastMsg.encryptedContent, lastMsg.iv, groupKey);
+            newDecryptions[lastMsg.id] = plaintext;
+          } catch (error) {
+            console.error(`Failed to decrypt group preview for message ${lastMsg.id}:`, error);
+            newDecryptions[lastMsg.id] = "[Decryption failed]";
+          }
+        }
+      }
+
+      // Update all decrypted messages at once
+      if (Object.keys(newDecryptions).length > 0) {
+        setDecryptedMessages((prev) => ({
+          ...prev,
+          ...newDecryptions,
+        }));
+      }
+    }
+
+    decryptGroupPreviews();
+  }, [groups, groupKeys]);
+
+  useEffect(() => {
+    // Only clear/load messages for 1-1 conversations, not when a group is selected
     if (!selectedId) {
-      setMessages([]);
+      // Only clear messages if no group is selected either
+      if (!selectedGroupId) {
+        setMessages([]);
+      }
       return;
     }
 
@@ -316,7 +454,7 @@ export default function ChatPage() {
     return () => {
       isMounted = false;
     };
-  }, [selectedId, token]);
+  }, [selectedId, selectedGroupId, token]);
 
   // Mark messages as "Read" when conversation is opened
   useEffect(() => {
@@ -392,6 +530,9 @@ export default function ChatPage() {
       if (conversationMenuOpen !== null) {
         setConversationMenuOpen(null);
       }
+      if (groupMenuOpen !== null) {
+        setGroupMenuOpen(null);
+      }
       if (
         isFriendDropdownOpen &&
         friendDropdownRef.current &&
@@ -404,7 +545,7 @@ export default function ChatPage() {
     };
     document.addEventListener("click", handleDocumentClick);
     return () => document.removeEventListener("click", handleDocumentClick);
-  }, [friendMenuOpen, conversationMenuOpen, isFriendDropdownOpen]);
+  }, [friendMenuOpen, conversationMenuOpen, groupMenuOpen, isFriendDropdownOpen]);
 
   // Listen for real-time incoming messages
   useEffect(() => {
@@ -568,6 +709,32 @@ export default function ChatPage() {
     return unsubscribe;
   }, [onFriendRequestRejected]);
 
+  // Listen for friend request cancellations
+  useEffect(() => {
+    const unsubscribe = onFriendRequestCancelled((cancellerData) => {
+      console.log("Friend request cancellation event received:", cancellerData);
+
+      // Remove from incoming requests
+      setFriendRequests((prev) => {
+        const newIncoming = prev.incoming.filter((req) => req.user.id !== cancellerData.id);
+        console.log(`Removing from incoming after cancellation: ${prev.incoming.length} -> ${newIncoming.length}`);
+        return {
+          ...prev,
+          incoming: newIncoming,
+        };
+      });
+
+      // Update search results if showing this user
+      setFriendSearchResult((prev) => {
+        if (!prev || prev.user.id !== cancellerData.id) return prev;
+        return { ...prev, relationshipStatus: "none" };
+      });
+
+      setToast({ message: `${cancellerData.username} cancelled their friend request.`, tone: "info" });
+    });
+    return unsubscribe;
+  }, [onFriendRequestCancelled]);
+
   // Listen for message status updates (delivered/read receipts)
   useEffect(() => {
     const unsubscribe = onMessageStatusUpdate((statusData) => {
@@ -698,6 +865,426 @@ export default function ChatPage() {
     });
     return unsubscribe;
   }, [onMessageSaved]);
+
+  // ============================================================================
+  // GROUP WEBSOCKET EVENT HANDLERS
+  // ============================================================================
+
+  // Listen for new group creation (when someone adds us to a group)
+  useEffect(() => {
+    const unsubscribe = onGroupCreated(async (group) => {
+      setGroups((prev) => [group, ...prev]);
+      setToast({ message: `You were added to group "${group.groupName}"`, tone: "info" });
+
+      // Immediately decrypt and store the group key if available
+      if (group.encryptedGroupKey && privateKey) {
+        try {
+          const decryptedKey = await decryptGroupKey(group.encryptedGroupKey, privateKey);
+          // Update both ref and state
+          groupKeysRef.current[group.groupChatID] = decryptedKey;
+          setGroupKeys((prev) => ({ ...prev, [group.groupChatID]: decryptedKey }));
+        } catch (error) {
+          console.error("Failed to decrypt group key on creation:", error);
+        }
+      }
+    });
+    return unsubscribe;
+  }, [onGroupCreated, privateKey]);
+
+  // Listen for incoming group messages
+  useEffect(() => {
+    const unsubscribe = onGroupMessage(async (data) => {
+      const { groupChatID, message } = data;
+
+      // Always add message to list if this group is selected
+      if (selectedGroupId === groupChatID) {
+        setMessages((prev) => [...prev, message]);
+      }
+
+      // Try to decrypt the message - first check ref (synchronous), then try loading from API
+      let groupKey = groupKeysRef.current[groupChatID];
+      if (!groupKey) {
+        // Key not in cache, try to load it from API
+        try {
+          const response = await api.getGroupKey(token, groupChatID);
+          if (response.encryptedGroupKey && privateKey) {
+            groupKey = await decryptGroupKey(response.encryptedGroupKey, privateKey);
+            groupKeysRef.current[groupChatID] = groupKey;
+            setGroupKeys((prev) => ({ ...prev, [groupChatID]: groupKey }));
+          }
+        } catch (error) {
+          console.error("Failed to load group key for incoming message:", error);
+        }
+      }
+
+      if (groupKey && message.encryptedContent && message.iv) {
+        try {
+          const plaintext = await decryptGroupMessage(message.encryptedContent, message.iv, groupKey);
+          setDecryptedMessages((prev) => ({
+            ...prev,
+            [message.id]: plaintext,
+          }));
+        } catch (error) {
+          console.error("Failed to decrypt group message:", error);
+        }
+      }
+
+      // Mark as read if not our own message and group is selected
+      if (selectedGroupId === groupChatID && !message.isOwn) {
+        try {
+          await api.markGroupMessageRead(token, groupChatID, message.id);
+        } catch (error) {
+          console.error("Failed to mark group message as read:", error);
+        }
+      }
+
+      // Update group's last message in list
+      setGroups((prev) =>
+        prev.map((g) =>
+          g.groupChatID === groupChatID ? { ...g, lastMessage: message } : g
+        )
+      );
+    });
+    return unsubscribe;
+  }, [onGroupMessage, selectedGroupId, groupKeys, token, privateKey]);
+
+  // Listen for group member additions
+  useEffect(() => {
+    const unsubscribe = onGroupMemberAdded((data) => {
+      const { groupChatID, member } = data;
+      setGroups((prev) =>
+        prev.map((g) => {
+          if (g.groupChatID !== groupChatID) return g;
+          const exists = g.members?.some((m) => m.user?.id === member.user?.id);
+          if (exists) return g;
+          return { ...g, members: [...(g.members || []), member] };
+        })
+      );
+    });
+    return unsubscribe;
+  }, [onGroupMemberAdded]);
+
+  // Listen for group member removals
+  useEffect(() => {
+    const unsubscribe = onGroupMemberRemoved(async (data) => {
+      const { groupChatID, removedUserId } = data;
+
+      // If we were removed, remove the group from our list
+      if (removedUserId === user.id) {
+        setGroups((prev) => prev.filter((g) => g.groupChatID !== groupChatID));
+        if (selectedGroupId === groupChatID) {
+          setSelectedGroupId(null);
+          setMessages([]);
+        }
+        // Clean up group key
+        delete groupKeysRef.current[groupChatID];
+        setGroupKeys((prev) => {
+          const newKeys = { ...prev };
+          delete newKeys[groupChatID];
+          return newKeys;
+        });
+        setToast({ message: "You were removed from a group.", tone: "info" });
+      } else {
+        // Someone else was removed - update member list
+        let updatedGroup = null;
+        setGroups((prev) =>
+          prev.map((g) => {
+            if (g.groupChatID !== groupChatID) return g;
+            updatedGroup = {
+              ...g,
+              members: g.members?.filter((m) => m.user?.id !== removedUserId),
+            };
+            return updatedGroup;
+          })
+        );
+
+        // If I'm the owner, rotate keys for forward secrecy
+        if (updatedGroup) {
+          const myMember = updatedGroup.members?.find((m) => m.user?.id === user.id);
+          if (myMember?.role === "Owner") {
+            const remainingMemberIds = updatedGroup.members?.map((m) => m.user?.id).filter(Boolean);
+            if (remainingMemberIds?.length > 0) {
+              console.log("Owner initiating key rotation after member removal...");
+              await rotateGroupKey(groupChatID, remainingMemberIds);
+            }
+          }
+        }
+      }
+    });
+    return unsubscribe;
+  }, [onGroupMemberRemoved, selectedGroupId, user.id, token]);
+
+  // Listen for group deletions
+  useEffect(() => {
+    const unsubscribe = onGroupDeleted((data) => {
+      const { groupChatID } = data;
+      setGroups((prev) => prev.filter((g) => g.groupChatID !== groupChatID));
+      if (selectedGroupId === groupChatID) {
+        setSelectedGroupId(null);
+        setMessages([]);
+        setToast({ message: "This group has been deleted.", tone: "info" });
+      }
+    });
+    return unsubscribe;
+  }, [onGroupDeleted, selectedGroupId]);
+
+  // Listen for group message edits
+  useEffect(() => {
+    const unsubscribe = onGroupMessageEdited(async (data) => {
+      const { groupChatID, messageId, encryptedContent, iv } = data;
+
+      // Use ref to always get current selectedGroupId value
+      if (selectedGroupIdRef.current === groupChatID) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === messageId ? { ...msg, isEdited: true, encryptedContent, iv } : msg
+          )
+        );
+
+        // Re-decrypt the edited message - check ref first, then load from API
+        let groupKey = groupKeysRef.current[groupChatID];
+        if (!groupKey) {
+          try {
+            const response = await api.getGroupKey(token, groupChatID);
+            if (response.encryptedGroupKey && privateKey) {
+              groupKey = await decryptGroupKey(response.encryptedGroupKey, privateKey);
+              groupKeysRef.current[groupChatID] = groupKey;
+              setGroupKeys((prev) => ({ ...prev, [groupChatID]: groupKey }));
+            }
+          } catch (error) {
+            console.error("Failed to load group key for edited message:", error);
+          }
+        }
+
+        if (groupKey && encryptedContent && iv) {
+          try {
+            const plaintext = await decryptGroupMessage(encryptedContent, iv, groupKey);
+            setDecryptedMessages((prev) => ({
+              ...prev,
+              [messageId]: plaintext,
+            }));
+          } catch (error) {
+            console.error("Failed to decrypt edited message:", error);
+          }
+        }
+      }
+    });
+    return unsubscribe;
+  }, [onGroupMessageEdited, groupKeys, token, privateKey]);
+
+  // Listen for group message unsend
+  useEffect(() => {
+    const unsubscribe = onGroupMessageUnsent((data) => {
+      const { groupChatID, messageId } = data;
+
+      // Use ref to always get current selectedGroupId value
+      if (selectedGroupIdRef.current === groupChatID) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === messageId ? { ...msg, isUnsent: true, unsentAt: new Date().toISOString() } : msg
+          )
+        );
+      }
+
+      // Update group preview
+      setGroups((prev) =>
+        prev.map((g) => {
+          if (g.groupChatID !== groupChatID || g.lastMessage?.id !== messageId) return g;
+          return { ...g, lastMessage: { ...g.lastMessage, isUnsent: true } };
+        })
+      );
+    });
+    return unsubscribe;
+  }, [onGroupMessageUnsent]);
+
+  // Listen for group message read status
+  useEffect(() => {
+    const unsubscribe = onGroupMessageRead((data) => {
+      const { groupChatID, messageId, readBy } = data;
+      console.log("[WS] Group message read event:", { groupChatID, messageId, readBy, currentGroupId: selectedGroupIdRef.current });
+
+      // Use ref to always get current selectedGroupId value
+      if (selectedGroupIdRef.current === groupChatID) {
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if (msg.id !== messageId) return msg;
+            const currentReadBy = msg.readBy || [];
+            if (currentReadBy.includes(readBy)) return msg;
+            console.log("[WS] Updating readBy for message", messageId, "adding user", readBy);
+            return { ...msg, readBy: [...currentReadBy, readBy] };
+          })
+        );
+      }
+    });
+    return unsubscribe;
+  }, [onGroupMessageRead]);
+
+  // Listen for group key rotation
+  useEffect(() => {
+    const unsubscribe = onGroupKeyRotated(async (data) => {
+      const { groupChatID, encryptedGroupKey } = data;
+
+      // Decrypt and store the new group key (both ref and state)
+      if (privateKey && encryptedGroupKey) {
+        try {
+          const newKey = await decryptGroupKey(encryptedGroupKey, privateKey);
+          groupKeysRef.current[groupChatID] = newKey;
+          setGroupKeys((prev) => ({ ...prev, [groupChatID]: newKey }));
+        } catch (error) {
+          console.error("Failed to decrypt rotated group key:", error);
+        }
+      }
+    });
+    return unsubscribe;
+  }, [onGroupKeyRotated, privateKey]);
+
+  // Listen for group message deletion
+  useEffect(() => {
+    const unsubscribe = onGroupMessageDeleted((data) => {
+      const { groupChatID, messageId } = data;
+
+      // Use ref to always get current selectedGroupId value
+      if (selectedGroupIdRef.current === groupChatID) {
+        setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      }
+
+      // Update group's last message if needed
+      setGroups((prev) =>
+        prev.map((g) => {
+          if (g.groupChatID !== groupChatID || g.lastMessage?.id !== messageId) return g;
+          return { ...g, lastMessage: null };
+        })
+      );
+    });
+    return unsubscribe;
+  }, [onGroupMessageDeleted]);
+
+  // Listen for group message save/star changes
+  useEffect(() => {
+    const unsubscribe = onGroupMessageSaved((data) => {
+      const { groupChatID, messageId, saved } = data;
+
+      // Use ref to always get current selectedGroupId value
+      if (selectedGroupIdRef.current === groupChatID) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === messageId ? { ...m, saved } : m))
+        );
+      }
+    });
+    return unsubscribe;
+  }, [onGroupMessageSaved]);
+
+  // Load group messages when a group is selected
+  useEffect(() => {
+    if (!selectedGroupId) return;
+    if (!privateKey) {
+      console.log("[DEBUG] loadGroup: privateKey not available yet, waiting...");
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadGroup() {
+      try {
+        // Load the group key first
+        console.log("[DEBUG] loadGroup: Loading key for group", selectedGroupId);
+        const key = await loadGroupKey(selectedGroupId);
+        console.log("[DEBUG] loadGroup: Key loaded:", key ? "success" : "failed");
+
+        // Then load messages
+        const response = await api.getGroupMessages(token, selectedGroupId);
+        const loadedMessages = response.messages ?? [];
+
+        if (isMounted) {
+          setMessages(loadedMessages);
+
+          // Mark unread messages as read (messages not from us and not already read by us)
+          if (user) {
+            const unreadMessages = loadedMessages.filter(
+              (msg) => !msg.isOwn && !(msg.readBy || []).includes(user.id)
+            );
+
+            for (const msg of unreadMessages) {
+              try {
+                await api.markGroupMessageRead(token, selectedGroupId, msg.id);
+                // Update local state to include ourselves in readBy
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === msg.id
+                      ? { ...m, readBy: [...(m.readBy || []), user.id] }
+                      : m
+                  )
+                );
+              } catch (error) {
+                console.error(`Failed to mark group message ${msg.id} as read:`, error);
+              }
+            }
+          }
+        }
+      } catch (error) {
+        if (isMounted) {
+          setToast({ message: `Failed to load group: ${error.message}`, tone: "error" });
+        }
+      }
+    }
+
+    loadGroup();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedGroupId, token, privateKey, user]);
+
+  // Decrypt group messages when they load
+  useEffect(() => {
+    if (!selectedGroupId || messages.length === 0 || !privateKey) return;
+
+    async function decryptMessages() {
+      // Try to get key from ref, or load it
+      let groupKey = groupKeysRef.current[selectedGroupId];
+
+      if (!groupKey) {
+        console.log("[DEBUG] decryptMessages: Key not in cache, trying to load...");
+        try {
+          const response = await api.getGroupKey(token, selectedGroupId);
+          if (response.encryptedGroupKey) {
+            groupKey = await decryptGroupKey(response.encryptedGroupKey, privateKey);
+            groupKeysRef.current[selectedGroupId] = groupKey;
+            setGroupKeys((prev) => ({ ...prev, [selectedGroupId]: groupKey }));
+            console.log("[DEBUG] decryptMessages: Key loaded successfully");
+          }
+        } catch (error) {
+          console.error("[DEBUG] decryptMessages: Failed to load key:", error);
+          return;
+        }
+      }
+
+      if (!groupKey) {
+        console.log("[DEBUG] decryptMessages: No key available, skipping decryption");
+        return;
+      }
+
+      const newDecryptions = {};
+
+      for (const message of messages) {
+        if (!message.encryptedContent || !message.iv) continue;
+        if (decryptedMessages[message.id]) continue; // Already decrypted
+
+        try {
+          const plaintext = await decryptGroupMessage(message.encryptedContent, message.iv, groupKey);
+          newDecryptions[message.id] = plaintext;
+        } catch (error) {
+          console.error(`Failed to decrypt group message ${message.id}:`, error);
+          newDecryptions[message.id] = "[Decryption failed]";
+        }
+      }
+
+      if (Object.keys(newDecryptions).length > 0) {
+        setDecryptedMessages((prev) => ({ ...prev, ...newDecryptions }));
+      }
+    }
+
+    decryptMessages();
+  }, [messages, selectedGroupId, groupKeys, decryptedMessages, privateKey, token]);
 
   // Listen for block/unblock events targeting current user
   useEffect(() => {
@@ -1156,6 +1743,23 @@ export default function ChatPage() {
     }
   };
 
+  const handleCancelRequest = async (recipientId) => {
+    setToast(null);
+    try {
+      await api.cancelFriendRequest(token, recipientId);
+      // Update the search result to reflect the cancelled request
+      setFriendSearchResult((previous) => {
+        if (!previous || previous.user.id !== recipientId) {
+          return previous;
+        }
+        return { ...previous, relationshipStatus: "none" };
+      });
+      setToast({ message: "✓ Friend request cancelled.", tone: "info" });
+    } catch (error) {
+      setToast({ message: error.message, tone: "error" });
+    }
+  };
+
   const handleDeleteFriend = async (friendId) => {
     setToast(null);
     try {
@@ -1345,6 +1949,31 @@ export default function ChatPage() {
       const decryptedBackups = await Promise.all(
         response.backups.map(async (backup) => {
           try {
+            // Handle group messages differently
+            if (backup.isGroupMessage) {
+              // Get the group key (check ref first, load if not cached)
+              const groupId = backup.groupId;
+              let groupKey = groupKeysRef.current[groupId];
+
+              if (!groupKey) {
+                // Load the group key from API
+                const keyResponse = await api.getGroupKey(token, groupId);
+                if (keyResponse.encryptedGroupKey) {
+                  groupKey = await decryptGroupKey(keyResponse.encryptedGroupKey, importedPrivateKey);
+                  // Cache it for future use (both ref and state)
+                  groupKeysRef.current[groupId] = groupKey;
+                  setGroupKeys((prev) => ({ ...prev, [groupId]: groupKey }));
+                }
+              }
+
+              if (groupKey && backup.encryptedContent && backup.iv) {
+                const decrypted = await decryptGroupMessage(backup.encryptedContent, backup.iv, groupKey);
+                return { ...backup, decryptedContent: decrypted };
+              }
+              return { ...backup, decryptedContent: "[Unable to decrypt group message]" };
+            }
+
+            // Handle 1-1 messages
             const decrypted = await decryptMessageComplete(backup, importedPrivateKey);
             return { ...backup, decryptedContent: decrypted };
           } catch (error) {
@@ -1388,6 +2017,389 @@ export default function ChatPage() {
       setToast({ message: "✓ Conversation deleted.", tone: "success" });
     } catch (error) {
       setToast({ message: `Failed to delete conversation: ${error.message}`, tone: "error" });
+    }
+  };
+
+  // ============================================================================
+  // GROUP CHAT HANDLERS
+  // ============================================================================
+
+  const handleCreateGroup = async () => {
+    if (!createGroupForm.name.trim()) {
+      setToast({ message: "Please enter a group name.", tone: "error" });
+      return;
+    }
+    if (createGroupForm.memberIds.length === 0) {
+      setToast({ message: "Please select at least one member.", tone: "error" });
+      return;
+    }
+
+    setIsCreatingGroup(true);
+    try {
+      // Generate a random AES-256 group key
+      const groupKeyBase64 = await generateGroupKey();
+      console.log("[DEBUG] handleCreateGroup: Generated group key");
+
+      // Get public keys for all selected members + self
+      const memberIds = [...createGroupForm.memberIds, user.id];
+      console.log("[DEBUG] handleCreateGroup: Member IDs =", memberIds);
+
+      const membersWithKeys = await Promise.all(
+        memberIds.map(async (memberId) => {
+          const response = await api.getPublicKey(token, memberId);
+          // Backend returns { user: {...}, key: { publicKey: "..." } }
+          const publicKey = response.key?.publicKey;
+          console.log(`[DEBUG] handleCreateGroup: Got public key for member ${memberId}:`, publicKey ? "present" : "missing");
+          return { id: memberId, publicKey };
+        })
+      );
+
+      // Encrypt the group key for each member
+      const encryptedKeys = await encryptGroupKeyForMembers(groupKeyBase64, membersWithKeys);
+      console.log("[DEBUG] handleCreateGroup: Encrypted keys for members:", Object.keys(encryptedKeys));
+
+      // Create the group
+      const response = await api.createGroup(
+        token,
+        createGroupForm.name.trim(),
+        createGroupForm.memberIds, // Don't include self, backend adds creator automatically
+        encryptedKeys,
+        createGroupForm.profilePic // Pass profile picture (base64 or null)
+      );
+
+      // Store the decrypted group key locally (both ref and state)
+      groupKeysRef.current[response.group.groupChatID] = groupKeyBase64;
+      setGroupKeys((prev) => ({
+        ...prev,
+        [response.group.groupChatID]: groupKeyBase64,
+      }));
+
+      // Add to groups list
+      setGroups((prev) => [response.group, ...prev]);
+
+      // Close modal and reset form
+      setIsCreateGroupModalOpen(false);
+      setCreateGroupForm({ name: "", memberIds: [], profilePic: null });
+      setToast({ message: `✓ Group "${response.group.groupName}" created!`, tone: "success" });
+
+      // Select the new group
+      setSelectedId(null);
+      setSelectedGroupId(response.group.groupChatID);
+    } catch (error) {
+      console.error("Failed to create group:", error);
+      setToast({ message: `Failed to create group: ${error.message}`, tone: "error" });
+    } finally {
+      setIsCreatingGroup(false);
+    }
+  };
+
+  const loadGroupMessages = async (groupId) => {
+    try {
+      const response = await api.getGroupMessages(token, groupId);
+      setMessages(response.messages ?? []);
+    } catch (error) {
+      setToast({ message: `Failed to load messages: ${error.message}`, tone: "error" });
+    }
+  };
+
+  const loadGroupKey = async (groupId, forceRefresh = false) => {
+    // Check if we already have the key (use ref for synchronous access)
+    const existingKey = groupKeysRef.current[groupId];
+    if (existingKey && !forceRefresh) {
+      return existingKey;
+    }
+
+    try {
+      const response = await api.getGroupKey(token, groupId);
+      console.log("loadGroupKey API response:", { groupId, encryptedGroupKey: response.encryptedGroupKey ? "present" : "missing", privateKeyAvailable: !!privateKey });
+
+      if (!response.encryptedGroupKey) {
+        console.error("No encrypted group key returned from API for group", groupId);
+        return null;
+      }
+
+      if (!privateKey) {
+        console.error("Private key not available for decrypting group key");
+        return null;
+      }
+
+      const decryptedKey = await decryptGroupKey(response.encryptedGroupKey, privateKey);
+      // Update both state and ref
+      groupKeysRef.current[groupId] = decryptedKey;
+      setGroupKeys((prev) => ({ ...prev, [groupId]: decryptedKey }));
+      return decryptedKey;
+    } catch (error) {
+      console.error("Failed to load group key:", error);
+    }
+    return null;
+  };
+
+  const handleSendGroupMessage = async () => {
+    if (!messageDraft.trim() || !selectedGroupId) return;
+
+    setIsSending(true);
+    try {
+      // Always try to load the group key (loadGroupKey checks cache first)
+      const groupKey = await loadGroupKey(selectedGroupId);
+      if (!groupKey) {
+        throw new Error("Unable to load group encryption key");
+      }
+
+      // Encrypt the message with the group key
+      const { encryptedContent, iv, hmac } = await encryptGroupMessage(messageDraft, groupKey);
+
+      // Send via API
+      const response = await api.sendGroupMessage(
+        token,
+        selectedGroupId,
+        encryptedContent,
+        iv,
+        hmac,
+        replyingTo?.id || null
+      );
+
+      // Add message to local list (backend returns message in "data" field)
+      const newMessage = response.data;
+      setMessages((prev) => [...prev, newMessage]);
+
+      // Store decrypted content
+      setDecryptedMessages((prev) => ({
+        ...prev,
+        [newMessage.id]: messageDraft,
+      }));
+
+      // Update group's lastMessage in the sidebar
+      setGroups((prev) =>
+        prev.map((g) =>
+          g.groupChatID === selectedGroupId ? { ...g, lastMessage: newMessage } : g
+        )
+      );
+
+      setMessageDraft("");
+      setReplyingTo(null);
+    } catch (error) {
+      setToast({ message: `Failed to send message: ${error.message}`, tone: "error" });
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleEditGroupMessage = async (messageId) => {
+    if (!editContent.trim() || !selectedGroupId) return;
+
+    setIsEditing(true);
+    try {
+      // Always try to load the group key (loadGroupKey checks cache first)
+      const groupKey = await loadGroupKey(selectedGroupId);
+      if (!groupKey) {
+        throw new Error("Unable to load group encryption key");
+      }
+
+      const { encryptedContent, iv, hmac } = await encryptGroupMessage(editContent, groupKey);
+
+      await api.editGroupMessage(token, selectedGroupId, messageId, encryptedContent, iv, hmac);
+
+      // Update local message
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId ? { ...msg, isEdited: true } : msg
+        )
+      );
+      setDecryptedMessages((prev) => ({
+        ...prev,
+        [messageId]: editContent,
+      }));
+
+      setEditingMessageId(null);
+      setEditContent("");
+    } catch (error) {
+      setToast({ message: `Failed to edit message: ${error.message}`, tone: "error" });
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
+  const handleUnsendGroupMessage = async (messageId) => {
+    if (!selectedGroupId) return;
+
+    try {
+      const response = await api.unsendGroupMessage(token, selectedGroupId, messageId);
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId ? { ...msg, isUnsent: true, unsentAt: new Date().toISOString() } : msg
+        )
+      );
+
+      // Update the group's lastMessage with the new one from backend
+      setGroups((prev) =>
+        prev.map((g) =>
+          g.groupChatID === selectedGroupId
+            ? { ...g, lastMessage: response.newLastMessage }
+            : g
+        )
+      );
+    } catch (error) {
+      setToast({ message: `Failed to unsend message: ${error.message}`, tone: "error" });
+    }
+  };
+
+  const handleDeleteGroupMessage = async (messageId) => {
+    if (!selectedGroupId) return;
+
+    try {
+      const response = await api.deleteGroupMessage(token, selectedGroupId, messageId);
+      setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
+
+      // Update the group's lastMessage with the new one from backend
+      setGroups((prev) =>
+        prev.map((g) =>
+          g.groupChatID === selectedGroupId
+            ? { ...g, lastMessage: response.newLastMessage }
+            : g
+        )
+      );
+    } catch (error) {
+      setToast({ message: `Failed to delete message: ${error.message}`, tone: "error" });
+    }
+  };
+
+  const handleSaveGroupMessage = async (messageId, currentlySaved) => {
+    if (!selectedGroupId) return;
+
+    try {
+      await api.saveGroupMessage(token, selectedGroupId, messageId, !currentlySaved);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId ? { ...msg, saved: !currentlySaved } : msg
+        )
+      );
+      setToast({
+        message: currentlySaved ? "Message unsaved." : "Message saved!",
+        tone: "success",
+      });
+    } catch (error) {
+      setToast({ message: `Failed to save message: ${error.message}`, tone: "error" });
+    }
+  };
+
+  const handleGroupMenuClick = (e, groupId) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    setGroupMenuPosition({
+      x: rect.right + 12,
+      y: rect.top + rect.height / 2,
+    });
+    setGroupMenuOpen(groupMenuOpen === groupId ? null : groupId);
+  };
+
+  const handleLeaveGroup = async (groupId) => {
+    setGroupMenuOpen(null);
+    try {
+      await api.leaveGroup(token, groupId, user.id);
+
+      // Remove group from list
+      setGroups((prev) => prev.filter((g) => g.groupChatID !== groupId));
+
+      // Clear chat if this was selected
+      if (selectedGroupId === groupId) {
+        setSelectedGroupId(null);
+        setMessages([]);
+      }
+
+      // Clean up group key
+      delete groupKeysRef.current[groupId];
+      setGroupKeys((prev) => {
+        const newKeys = { ...prev };
+        delete newKeys[groupId];
+        return newKeys;
+      });
+
+      setToast({ message: "You left the group.", tone: "success" });
+    } catch (error) {
+      setToast({ message: `Failed to leave group: ${error.message}`, tone: "error" });
+    }
+  };
+
+  const handleDeleteGroup = async (groupId) => {
+    setGroupMenuOpen(null);
+    try {
+      await api.deleteGroup(token, groupId);
+
+      // Remove group from list
+      setGroups((prev) => prev.filter((g) => g.groupChatID !== groupId));
+
+      // Clear chat if this was selected
+      if (selectedGroupId === groupId) {
+        setSelectedGroupId(null);
+        setMessages([]);
+      }
+
+      // Clean up group key
+      delete groupKeysRef.current[groupId];
+      setGroupKeys((prev) => {
+        const newKeys = { ...prev };
+        delete newKeys[groupId];
+        return newKeys;
+      });
+
+      setToast({ message: "Group deleted.", tone: "success" });
+    } catch (error) {
+      setToast({ message: `Failed to delete group: ${error.message}`, tone: "error" });
+    }
+  };
+
+  const rotateGroupKey = async (groupId, memberIds) => {
+    try {
+      // Generate new group key
+      const newGroupKeyBase64 = await generateGroupKey();
+
+      // Get public keys for all remaining members
+      const memberPublicKeys = await Promise.all(
+        memberIds.map(async (memberId) => {
+          // Check cache first
+          if (publicKeyCache.current[memberId]) {
+            return { id: memberId, publicKey: publicKeyCache.current[memberId] };
+          }
+          try {
+            const response = await api.getPublicKey(token, memberId);
+            const publicKey = response.key?.publicKey;
+            if (publicKey) {
+              publicKeyCache.current[memberId] = publicKey;
+            }
+            return { id: memberId, publicKey };
+          } catch {
+            return { id: memberId, publicKey: null };
+          }
+        })
+      );
+
+      // Filter out members without public keys
+      const validMembers = memberPublicKeys.filter((m) => m.publicKey);
+
+      if (validMembers.length === 0) {
+        console.error("No valid public keys for key rotation");
+        return false;
+      }
+
+      // Encrypt the new group key for each member
+      const encryptedKeys = await encryptGroupKeyForMembers(
+        newGroupKeyBase64,
+        validMembers.map((m) => ({ userId: m.id, publicKeyPem: m.publicKey }))
+      );
+
+      // Call the rotate key API
+      await api.rotateGroupKey(token, groupId, encryptedKeys);
+
+      // Store the new key locally
+      groupKeysRef.current[groupId] = newGroupKeyBase64;
+      setGroupKeys((prev) => ({ ...prev, [groupId]: newGroupKeyBase64 }));
+
+      console.log(`Group key rotated for group ${groupId}`);
+      return true;
+    } catch (error) {
+      console.error("Failed to rotate group key:", error);
+      return false;
     }
   };
 
@@ -1513,6 +2525,13 @@ export default function ChatPage() {
       return (
         <>
           <span className="search-card-pill">Request sent</span>
+          <button
+            type="button"
+            className="ghost-button inline"
+            onClick={() => handleCancelRequest(friendSearchResult.user.id)}
+          >
+            Cancel Request
+          </button>
           <button
             type="button"
             className="ghost-button inline danger"
@@ -1736,9 +2755,20 @@ export default function ChatPage() {
                 <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                   {backups.map((backup) => {
                     const isOwn = backup.senderID === user.id;
-                    const otherUsername = isOwn
-                      ? (backup.receiver?.username || "Unknown")
-                      : (backup.sender?.username || "Unknown");
+                    const isGroupMessage = backup.isGroupMessage;
+                    const senderName = backup.sender?.username || "Unknown";
+
+                    // Format the header based on message type
+                    let headerText;
+                    if (isGroupMessage) {
+                      headerText = `${isOwn ? "You" : senderName} in ${backup.groupName || "Group"}`;
+                    } else {
+                      const otherUsername = isOwn
+                        ? (backup.receiver?.username || "Unknown")
+                        : senderName;
+                      headerText = isOwn ? `You → ${otherUsername}` : `${otherUsername} → You`;
+                    }
+
                     const backupTimestamp = backup.sentAt || backup.timestamp;
                     const content = backup.decryptedContent || "";
                     const isLongMessage = content.length > 200;
@@ -1770,7 +2800,12 @@ export default function ChatPage() {
                         >
                           <div>
                             <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                              {isOwn ? `You → ${otherUsername}` : `${otherUsername} → You`}
+                              {isGroupMessage && (
+                                <span style={{ marginRight: "6px", fontSize: "0.75rem", background: "var(--accent-soft)", padding: "2px 6px", borderRadius: "4px" }}>
+                                  Group
+                                </span>
+                              )}
+                              {headerText}
                             </p>
                             <p style={{ margin: "4px 0 0", fontSize: "0.75rem", color: "var(--text-muted)" }}>
                               {formatTime(backupTimestamp)}
@@ -1846,6 +2881,219 @@ export default function ChatPage() {
                 style={{ width: "100%" }}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isCreateGroupModalOpen && (
+        <div className="settings-overlay" onClick={() => setIsCreateGroupModalOpen(false)}>
+          <div
+            className="settings-modal"
+            onClick={(event) => event.stopPropagation()}
+            style={{ maxWidth: "500px" }}
+          >
+            <header className="settings-modal-header">
+              <div>
+                <h2>Create Group</h2>
+                <p>Start a new group conversation with your friends.</p>
+              </div>
+              <button
+                type="button"
+                className="settings-close"
+                onClick={() => setIsCreateGroupModalOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <div style={{ padding: "20px 0", maxHeight: "60vh", overflowY: "auto" }}>
+              {/* Group Profile Picture */}
+              <div className="form-group" style={{ marginBottom: "20px", display: "flex", alignItems: "center", gap: "16px" }}>
+                <input
+                  ref={groupPicInputRef}
+                  type="file"
+                  accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (file.size > 500 * 1024) {
+                      setToast({ message: "Image too large. Maximum size is 500KB.", tone: "error" });
+                      return;
+                    }
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                      setCreateGroupForm((prev) => ({ ...prev, profilePic: event.target.result }));
+                    };
+                    reader.readAsDataURL(file);
+                    e.target.value = "";
+                  }}
+                />
+                <div
+                  onClick={() => groupPicInputRef.current?.click()}
+                  style={{
+                    width: "64px",
+                    height: "64px",
+                    borderRadius: "50%",
+                    background: createGroupForm.profilePic ? "transparent" : "var(--accent)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    overflow: "hidden",
+                    border: "2px dashed var(--card-border)",
+                    flexShrink: 0,
+                  }}
+                  title="Click to add group picture"
+                >
+                  {createGroupForm.profilePic ? (
+                    <img src={createGroupForm.profilePic} alt="Group" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    <span style={{ fontSize: "1.5rem", color: "var(--button-primary-text)" }}>+</span>
+                  )}
+                </div>
+                <div>
+                  <p style={{ margin: 0, fontWeight: 500 }}>Group Picture</p>
+                  <p style={{ margin: "4px 0 0", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                    Optional. Click to upload (max 500KB)
+                  </p>
+                  {createGroupForm.profilePic && (
+                    <button
+                      type="button"
+                      onClick={() => setCreateGroupForm((prev) => ({ ...prev, profilePic: null }))}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "#ff6b6b",
+                        fontSize: "0.75rem",
+                        cursor: "pointer",
+                        padding: "4px 0",
+                      }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="form-group" style={{ marginBottom: "20px" }}>
+                <label htmlFor="groupName" style={{ display: "block", marginBottom: "8px", fontWeight: 500 }}>
+                  Group Name
+                </label>
+                <input
+                  type="text"
+                  id="groupName"
+                  className="input-box"
+                  placeholder="Enter group name..."
+                  value={createGroupForm.name}
+                  onChange={(e) => {
+                    // Only allow alphanumeric characters and basic punctuation
+                    const value = e.target.value.replace(/[^a-zA-Z0-9_-]/g, "");
+                    setCreateGroupForm((prev) => ({ ...prev, name: value }));
+                  }}
+                  maxLength={8}
+                  style={{ width: "100%" }}
+                />
+                <p style={{ margin: "4px 0 0", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                  {createGroupForm.name.length}/8 characters (letters, numbers, _ and - only)
+                </p>
+              </div>
+              <div className="form-group">
+                <label style={{ display: "block", marginBottom: "8px", fontWeight: 500 }}>
+                  Select Members ({createGroupForm.memberIds.length}/31 selected)
+                </label>
+                <div
+                  style={{
+                    maxHeight: "200px",
+                    overflowY: "auto",
+                    border: "1px solid var(--card-border)",
+                    borderRadius: "8px",
+                    padding: "8px",
+                  }}
+                >
+                  {friends.length === 0 ? (
+                    <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "16px" }}>
+                      No friends to add. Add some friends first!
+                    </p>
+                  ) : (
+                    friends.map((friend) => {
+                      const isSelected = createGroupForm.memberIds.includes(friend.id);
+                      return (
+                        <label
+                          key={friend.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "12px",
+                            padding: "10px 12px",
+                            cursor: "pointer",
+                            borderRadius: "6px",
+                            background: isSelected ? "var(--accent-soft)" : "transparent",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              setCreateGroupForm((prev) => {
+                                const newIds = isSelected
+                                  ? prev.memberIds.filter((id) => id !== friend.id)
+                                  : [...prev.memberIds, friend.id];
+                                return { ...prev, memberIds: newIds };
+                              });
+                            }}
+                            disabled={!isSelected && createGroupForm.memberIds.length >= 31}
+                          />
+                          <div className="conversation-avatar" style={{ width: "32px", height: "32px", fontSize: "0.8rem" }}>
+                            {friend.profilePicUrl ? (
+                              <img src={friend.profilePicUrl} alt={friend.username} className="avatar-image" />
+                            ) : (
+                              friend.displayName?.charAt(0).toUpperCase() || friend.username?.charAt(0).toUpperCase()
+                            )}
+                          </div>
+                          <div>
+                            <span style={{ fontWeight: 500 }}>{friend.displayName || friend.username}</span>
+                            {friend.displayName && (
+                              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginLeft: "6px" }}>
+                                @{friend.username}
+                              </span>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="ghost-button inline"
+                onClick={() => {
+                  setIsCreateGroupModalOpen(false);
+                  setCreateGroupForm({ name: "", memberIds: [], profilePic: null });
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateGroup}
+                disabled={isCreatingGroup || !createGroupForm.name.trim() || createGroupForm.memberIds.length === 0}
+                style={{
+                  background: "var(--accent)",
+                  color: "var(--button-primary-text)",
+                  border: "none",
+                  borderRadius: "8px",
+                  padding: "10px 20px",
+                  fontSize: "0.9rem",
+                  fontWeight: 500,
+                  cursor: isCreatingGroup || !createGroupForm.name.trim() || createGroupForm.memberIds.length === 0 ? "not-allowed" : "pointer",
+                  opacity: isCreatingGroup || !createGroupForm.name.trim() || createGroupForm.memberIds.length === 0 ? 0.5 : 1,
+                }}
+              >
+                {isCreatingGroup ? "Creating..." : "Create Group"}
               </button>
             </div>
           </div>
@@ -2250,8 +3498,28 @@ export default function ChatPage() {
         </aside>
         <div className="chat-columns">
           <section className="conversation-list">
-            <header className="panel-header">
+            <header className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <h1>Chats</h1>
+              <button
+                type="button"
+                onClick={() => {
+                  setCreateGroupForm({ name: "", memberIds: [] });
+                  setIsCreateGroupModalOpen(true);
+                }}
+                style={{
+                  background: "var(--accent)",
+                  color: "var(--button-primary-text)",
+                  border: "none",
+                  borderRadius: "6px",
+                  padding: "6px 12px",
+                  fontSize: "0.85rem",
+                  cursor: "pointer",
+                  fontWeight: 500,
+                }}
+                title="Create Group"
+              >
+                + Group
+              </button>
             </header>
             <div className="conversation-items">
               {isLoading ? (
@@ -2279,7 +3547,10 @@ export default function ChatPage() {
                         className={`conversation-item ${
                           conversation.id === selectedId ? "active" : ""
                         }`}
-                        onClick={() => setSelectedId(conversation.id)}
+                        onClick={() => {
+                          setSelectedGroupId(null);
+                          setSelectedId(conversation.id);
+                        }}
                         style={{ paddingRight: "40px" }}
                       >
                         <div className="conversation-avatar">
@@ -2374,20 +3645,223 @@ export default function ChatPage() {
                   );
                 })
               )}
+
+              {/* Groups Section */}
+              {groups.length > 0 && (
+                <>
+                  <div style={{ padding: "12px 16px 8px", fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                    Groups
+                  </div>
+                  {groups.map((group) => {
+                    const lastMsg = group.lastMessage;
+                    const memberCount = group.members?.length || 0;
+                    const preview = lastMsg
+                      ? (lastMsg.isUnsent ? "Message was unsent" : (decryptedMessages[lastMsg.id] || "Encrypted message"))
+                      : "No messages yet.";
+                    const isOwner = group.members?.find(m => m.user?.id === user.id)?.role === "Owner";
+                    // Sort members: owner first, then alphabetically
+                    const sortedMembers = [...(group.members || [])].sort((a, b) => {
+                      if (a.role === "Owner") return -1;
+                      if (b.role === "Owner") return 1;
+                      return (a.user?.username || "").localeCompare(b.user?.username || "");
+                    });
+                    return (
+                      <div
+                        key={`group-${group.groupChatID}`}
+                        style={{ position: "relative", width: "100%" }}
+                      >
+                        <button
+                          type="button"
+                          className={`conversation-item ${selectedGroupId === group.groupChatID ? "active" : ""}`}
+                          onClick={() => {
+                            setSelectedId(null);
+                            setSelectedGroupId(group.groupChatID);
+                          }}
+                          style={{ paddingRight: "40px" }}
+                        >
+                          <div className="conversation-avatar" style={{ background: "var(--accent)" }}>
+                            {group.profilePicUrl ? (
+                              <img src={group.profilePicUrl} alt="Group" className="avatar-image" />
+                            ) : (
+                              group.groupName?.charAt(0).toUpperCase()
+                            )}
+                          </div>
+                          <div className="conversation-copy">
+                            <span className="conversation-name" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                              <span title={group.groupName}>{group.groupName}</span>
+                              <span
+                                style={{
+                                  fontSize: "0.65rem",
+                                  color: "var(--text-muted)",
+                                  fontWeight: "normal",
+                                  cursor: "pointer",
+                                  flexShrink: 0,
+                                  marginLeft: "auto",
+                                }}
+                                onMouseEnter={(e) => {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  setMemberTooltipPosition({ x: rect.left, y: rect.bottom + 4 });
+                                  setHoveredGroupMembers(group.groupChatID);
+                                }}
+                                onMouseLeave={() => setHoveredGroupMembers(null)}
+                              >
+                                {memberCount} member{memberCount !== 1 ? "s" : ""}
+                              </span>
+                            </span>
+                            <span className="conversation-preview">
+                              {lastMsg ? (
+                                lastMsg.isUnsent ? "Message was unsent" : (
+                                  <>
+                                    <span style={{ fontWeight: 500 }}>{lastMsg.sender?.username || "Unknown"}</span>: {decryptedMessages[lastMsg.id] || "Encrypted message"}
+                                  </>
+                                )
+                              ) : "No messages yet."}
+                            </span>
+                          </div>
+                        </button>
+                        {/* Member tooltip */}
+                        {hoveredGroupMembers === group.groupChatID && (
+                          <div
+                            style={{
+                              position: "fixed",
+                              left: `${memberTooltipPosition.x}px`,
+                              top: `${memberTooltipPosition.y}px`,
+                              backgroundColor: "#333",
+                              color: "white",
+                              padding: "8px 12px",
+                              borderRadius: "6px",
+                              fontSize: "0.8rem",
+                              zIndex: 5000,
+                              boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+                              maxWidth: "200px",
+                            }}
+                            onMouseEnter={() => setHoveredGroupMembers(group.groupChatID)}
+                            onMouseLeave={() => setHoveredGroupMembers(null)}
+                          >
+                            {sortedMembers.map((m) => (
+                              <div key={m.user?.id} style={{ padding: "2px 0" }}>
+                                {m.role === "Owner" ? (
+                                  <span style={{ fontWeight: "bold" }}>
+                                    {m.user?.username} 👑
+                                  </span>
+                                ) : (
+                                  <span>{m.user?.username}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* 3-dot menu button */}
+                        <button
+                          type="button"
+                          onClick={(e) => handleGroupMenuClick(e, group.groupChatID)}
+                          style={{
+                            position: "absolute",
+                            right: "8px",
+                            top: "50%",
+                            transform: "translateY(-50%)",
+                            background: "transparent",
+                            border: "none",
+                            cursor: "pointer",
+                            fontSize: "18px",
+                            padding: "4px 8px",
+                            color: "var(--text-muted)",
+                          }}
+                        >
+                          ⋮
+                        </button>
+                        {/* Group menu dropdown */}
+                        {groupMenuOpen === group.groupChatID && (
+                          <div
+                            style={{
+                              position: "fixed",
+                              left: `${groupMenuPosition.x}px`,
+                              top: `${groupMenuPosition.y}px`,
+                              transform: "translateY(-50%)",
+                              backgroundColor: "white",
+                              border: "1px solid #ddd",
+                              borderRadius: "6px",
+                              boxShadow: "0 12px 30px rgba(0,0,0,0.22)",
+                              zIndex: 4000,
+                              minWidth: "170px",
+                              padding: "6px",
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "6px",
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {isOwner ? (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteGroup(group.groupChatID)}
+                                style={{
+                                  width: "100%",
+                                  padding: "10px 12px",
+                                  border: "none",
+                                  background: "#fff1f1",
+                                  textAlign: "left",
+                                  cursor: "pointer",
+                                  color: "#d32f2f",
+                                  borderRadius: "4px",
+                                  fontWeight: 600,
+                                  transition: "background-color 0.15s ease",
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#ffe1e1")}
+                                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#fff1f1")}
+                              >
+                                Delete
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleLeaveGroup(group.groupChatID)}
+                                style={{
+                                  width: "100%",
+                                  padding: "10px 12px",
+                                  border: "none",
+                                  background: "#fff1f1",
+                                  textAlign: "left",
+                                  cursor: "pointer",
+                                  color: "#d32f2f",
+                                  borderRadius: "4px",
+                                  fontWeight: 600,
+                                  transition: "background-color 0.15s ease",
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#ffe1e1")}
+                                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#fff1f1")}
+                              >
+                                Leave
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
           </section>
 
           <section className="chat-panel">
             <header className="panel-header conversation">
               <h1
-              style={selectedConversation ? { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : {}}
-              title={selectedConversation?.participants?.[0]?.displayName || selectedConversation?.name || ""}
+              style={(selectedConversation || selectedGroup) ? { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : {}}
+              title={selectedGroup ? selectedGroup.groupName : (selectedConversation?.participants?.[0]?.displayName || selectedConversation?.name || "")}
             >
-              {selectedConversation?.participants?.[0]?.displayName || selectedConversation?.name || "Select a conversation"}
+              {selectedGroup
+                ? selectedGroup.groupName
+                : (selectedConversation?.participants?.[0]?.displayName || selectedConversation?.name || "Select a conversation")}
             </h1>
+            {selectedGroup && (
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginLeft: "8px" }}>
+                {selectedGroup.members?.length || 0} members
+              </span>
+            )}
             </header>
             <div className="message-list">
-              {selectedConversation ? (
+              {(selectedConversation || selectedGroup) ? (
                 messages.length ? (
                   messages.map((message) => {
                   // Handle unsent messages
@@ -2415,10 +3889,37 @@ export default function ChatPage() {
                     (privateKey ? "Decrypting..." : message.content);
 
                   // Get status indicator for sent messages
-                  const getStatusIndicator = (status) => {
+                  const getStatusIndicator = (status, readBy, memberCount) => {
+                    // For group messages, show read count with color coding
+                    if (selectedGroup) {
+                      const readCount = readBy?.length || 0;
+                      const totalOthers = (memberCount || 0) - 1; // Exclude sender
+
+                      if (totalOthers <= 0) {
+                        return <span style={{ color: "var(--status-pending)" }}>Sent</span>;
+                      }
+
+                      if (readCount === 0) {
+                        // No one has read - show "Delivered"
+                        return <span style={{ color: "var(--status-pending)" }}>Delivered</span>;
+                      }
+
+                      if (readCount >= totalOthers) {
+                        // All members have read - show in blue
+                        return <span style={{ color: "#4a9eff" }}>Read {readCount}/{totalOthers}</span>;
+                      }
+
+                      // Partial reads - show count
+                      return (
+                        <span style={{ color: "var(--status-pending)" }}>
+                          Read {readCount}/{totalOthers}
+                        </span>
+                      );
+                    }
+                    // For 1-1 messages
                     if (status === "Read") return <span style={{ color: "#4a9eff" }}>Read</span>;
-                    if (status === "Delivered") return <span>Delivered</span>;
-                    return <span>Sent</span>;
+                    if (status === "Delivered") return <span style={{ color: "var(--status-pending)" }}>Delivered</span>;
+                    return <span style={{ color: "var(--status-pending)" }}>Sent</span>;
                   };
 
                   // Get reply preview if this message is a reply
@@ -2442,6 +3943,11 @@ export default function ChatPage() {
                     </div>
                   ) : null;
 
+                  // Check if message sender is the group owner
+                  const senderIsOwner = selectedGroup && selectedGroup.members?.find(
+                    (m) => m.user?.id === message.sender?.id
+                  )?.role === "Owner";
+
                   return (
                       <article
                         key={message.id}
@@ -2452,11 +3958,17 @@ export default function ChatPage() {
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <span className="bubble-meta" title={message.isOwn ? "You" : message.sender.username}>
                             {message.isOwn ? "You" : message.sender.username}
+                            {senderIsOwner && (
+                              <span style={{ marginLeft: "4px", fontSize: "0.85em" }} title="Group Owner">👑</span>
+                            )}
                           </span>
                           <button
                             type="button"
                             className="save-message-btn"
-                            onClick={() => handleSaveMessage(message.id, message.saved)}
+                            onClick={() => selectedGroup
+                              ? handleSaveGroupMessage(message.id, message.saved)
+                              : handleSaveMessage(message.id, message.saved)
+                            }
                             title={message.saved ? "Unsave message" : "Save message"}
                             aria-label={message.saved ? "Unsave message" : "Save message"}
                           >
@@ -2503,7 +4015,10 @@ export default function ChatPage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={handleSaveEdit}
+                                onClick={() => selectedGroup
+                                  ? handleEditGroupMessage(message.id)
+                                  : handleSaveEdit()
+                                }
                                 disabled={isEditing || !editContent.trim()}
                                 style={{
                                   fontSize: "0.75rem",
@@ -2528,7 +4043,7 @@ export default function ChatPage() {
                           )}
                           {message.isOwn && (
                             <>
-                              {getStatusIndicator(message.status)}
+                              {getStatusIndicator(message.status, message.readBy, selectedGroup?.members?.length)}
                               <span style={{ marginLeft: '8px' }}>{formatTime(message.sentAt)}</span>
                             </>
                           )}
@@ -2607,7 +4122,10 @@ export default function ChatPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleUnsendMessage(contextMenu.messageId)}
+                      onClick={() => selectedGroup
+                        ? handleUnsendGroupMessage(contextMenu.messageId)
+                        : handleUnsendMessage(contextMenu.messageId)
+                      }
                       className="context-menu-item"
                       style={{
                         display: "block",
@@ -2678,31 +4196,42 @@ export default function ChatPage() {
               </div>
             )}
 
-            <form className="composer" onSubmit={handleSendMessage}>
+            <form className="composer" onSubmit={(e) => {
+              e.preventDefault();
+              if (selectedGroup) {
+                handleSendGroupMessage();
+              } else {
+                handleSendMessage(e);
+              }
+            }}>
               <textarea
                 className="composer-input"
                 placeholder="Type Your Message..."
                 value={messageDraft}
-                disabled={!selectedConversation}
+                disabled={!selectedConversation && !selectedGroup}
                 onChange={(event) => setMessageDraft(event.target.value)}
                 maxLength={2000}
               rows={1}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
-                  handleSendMessage(event);
+                  if (selectedGroup) {
+                    handleSendGroupMessage();
+                  } else {
+                    handleSendMessage(event);
+                  }
                 }
               }}
             />
               <button
                 className="composer-send"
                 type="submit"
-                disabled={!selectedConversation || isSending || !messageDraft.trim()}
+                disabled={(!selectedConversation && !selectedGroup) || isSending || !messageDraft.trim()}
               >
                 {isSending ? "…" : "➤"}
               </button>
             </form>
-          {selectedConversation && (
+          {(selectedConversation || selectedGroup) && (
             <p className="character-counter">
               {messageDraft.length}/2000 characters
             </p>

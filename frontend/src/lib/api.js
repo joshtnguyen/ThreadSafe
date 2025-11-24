@@ -74,6 +74,8 @@ export const api = {
     request(`/friends/requests/${requesterId}/accept`, { method: "POST", token }),
   rejectFriendRequest: (token, requesterId) =>
     request(`/friends/requests/${requesterId}/reject`, { method: "DELETE", token }),
+  cancelFriendRequest: (token, recipientId) =>
+    request(`/friends/requests/${recipientId}/cancel`, { method: "DELETE", token }),
   deleteFriend: (token, friendId) =>
     request(`/friends/${friendId}`, { method: "DELETE", token }),
   rotatePublicKey: (token, publicKey, encryptedPrivateKey = null, salt = null, iv = null) =>
@@ -142,5 +144,93 @@ export const api = {
       method: "POST",
       token,
       body: { encrypted: true, ...encryptedData, replyToId },
+    }),
+
+  // ============================================================================
+  // Group Chat API
+  // ============================================================================
+
+  // Group CRUD
+  createGroup: (token, groupName, memberIds, encryptedKeys, profilePicUrl = null) =>
+    request("/groups", {
+      method: "POST",
+      token,
+      body: { groupName, memberIds, encryptedKeys, profilePicUrl },
+    }),
+  getGroups: (token) => request("/groups", { token }),
+  getGroup: (token, groupId) => request(`/groups/${groupId}`, { token }),
+  updateGroup: (token, groupId, updates) =>
+    request(`/groups/${groupId}`, { method: "PATCH", token, body: updates }),
+  deleteGroup: (token, groupId) =>
+    request(`/groups/${groupId}`, { method: "DELETE", token }),
+
+  // Group Membership
+  addGroupMembers: (token, groupId, memberIds, encryptedKeys) =>
+    request(`/groups/${groupId}/members`, {
+      method: "POST",
+      token,
+      body: { memberIds, encryptedKeys },
+    }),
+  removeGroupMember: (token, groupId, memberId) =>
+    request(`/groups/${groupId}/members/${memberId}`, { method: "DELETE", token }),
+  leaveGroup: (token, groupId, userId) =>
+    request(`/groups/${groupId}/members/${userId}`, { method: "DELETE", token }),
+  transferOwnership: (token, groupId, newOwnerId) =>
+    request(`/groups/${groupId}/members/${newOwnerId}/role`, {
+      method: "PATCH",
+      token,
+      body: { role: "Owner" },
+    }),
+
+  // Group Key Management
+  storeGroupKeys: (token, groupId, encryptedKeys) =>
+    request(`/groups/${groupId}/keys`, {
+      method: "POST",
+      token,
+      body: { encryptedKeys },
+    }),
+  getGroupKey: (token, groupId) => request(`/groups/${groupId}/keys`, { token }),
+  rotateGroupKey: (token, groupId, encryptedKeys) =>
+    request(`/groups/${groupId}/keys/rotate`, {
+      method: "POST",
+      token,
+      body: { encryptedKeys },
+    }),
+
+  // Group Messages
+  getGroupMessages: (token, groupId) =>
+    request(`/groups/${groupId}/messages`, { token }),
+  sendGroupMessage: (token, groupId, encryptedContent, iv, hmac, replyToId = null) =>
+    request(`/groups/${groupId}/messages`, {
+      method: "POST",
+      token,
+      body: { encryptedContent, iv, hmac, replyToId },
+    }),
+  markGroupMessageRead: (token, groupId, messageId) =>
+    request(`/groups/${groupId}/messages/${messageId}/read`, {
+      method: "PATCH",
+      token,
+    }),
+  editGroupMessage: (token, groupId, messageId, encryptedContent, iv, hmac) =>
+    request(`/groups/${groupId}/messages/${messageId}/edit`, {
+      method: "PATCH",
+      token,
+      body: { encryptedContent, iv, hmac },
+    }),
+  unsendGroupMessage: (token, groupId, messageId) =>
+    request(`/groups/${groupId}/messages/${messageId}/unsend`, {
+      method: "PATCH",
+      token,
+    }),
+  deleteGroupMessage: (token, groupId, messageId) =>
+    request(`/groups/${groupId}/messages/${messageId}`, {
+      method: "DELETE",
+      token,
+    }),
+  saveGroupMessage: (token, groupId, messageId, saved) =>
+    request(`/groups/${groupId}/messages/${messageId}/save`, {
+      method: "PATCH",
+      token,
+      body: { saved },
     }),
 };

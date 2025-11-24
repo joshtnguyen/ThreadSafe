@@ -453,6 +453,37 @@ def reject_friend_request(requester_id: int):
     return jsonify({"message": "Friend request rejected."}), 200
 
 
+@friends_bp.delete("/requests/<int:recipient_id>/cancel")
+@jwt_required()
+def cancel_friend_request(recipient_id: int):
+    """Cancel an outgoing friend request."""
+    current_user_id = _safe_identity()
+
+    if recipient_id == current_user_id:
+        return jsonify({"message": "Invalid request."}), 400
+
+    # Find the pending request that the current user sent
+    request_record = Contact.query.filter_by(
+        userID=current_user_id,
+        contact_userID=recipient_id,
+        contactStatus="Pending"
+    ).first()
+
+    if not request_record:
+        return jsonify({"message": "Friend request not found."}), 404
+
+    db.session.delete(request_record)
+    db.session.commit()
+
+    # Emit real-time notification to recipient (the person who would have received the request)
+    from backend.websocket_helper import emit_friend_request_cancelled
+    current_user = User.query.get(current_user_id)
+    if current_user:
+        emit_friend_request_cancelled(recipient_id, current_user.to_dict())
+
+    return jsonify({"message": "Friend request cancelled."}), 200
+
+
 @friends_bp.delete("/<int:friend_id>")
 @jwt_required()
 def delete_friend(friend_id: int):

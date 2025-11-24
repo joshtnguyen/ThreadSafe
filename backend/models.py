@@ -173,6 +173,7 @@ class GroupChat(db.Model):
 
     groupChatID = db.Column(db.Integer, primary_key=True, autoincrement=True)
     groupName = db.Column(db.String(255), nullable=False)
+    profile_pic_url = db.Column(db.Text, nullable=True)  # Group profile picture
     created_by = db.Column(
         db.Integer,
         db.ForeignKey("user.userID", ondelete="CASCADE", onupdate="CASCADE"),
@@ -194,6 +195,7 @@ class GroupChat(db.Model):
         result = {
             "groupChatID": self.groupChatID,
             "groupName": self.groupName,
+            "profilePicUrl": self.profile_pic_url,
             "createdBy": self.created_by,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
         }
@@ -309,6 +311,9 @@ class GroupMember(db.Model):
     )  # 'Owner', 'Admin', 'Member'
     joined_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # Encrypted group key for this member (encrypted with their public key)
+    encrypted_group_key = db.Column(db.Text, nullable=True)
+
     # Relationships
     group = db.relationship("GroupChat", back_populates="members")
     user = db.relationship("User", back_populates="group_memberships")
@@ -320,6 +325,7 @@ class GroupMember(db.Model):
             "role": self.role,
             "joinedAt": self.joined_at.isoformat() if self.joined_at else None,
             "user": self.user.to_dict() if self.user else None,
+            "encryptedGroupKey": self.encrypted_group_key,
         }
 
 
@@ -488,7 +494,44 @@ class Message(db.Model):
 
 
 # ============================================================================
-# 9. BACKUP Table (Depends on USER)
+# 9. GROUP_MESSAGE_STATUS Table (Tracks per-user read/save status for group messages)
+# ============================================================================
+class GroupMessageStatus(db.Model):
+    """Tracks per-user status for group messages (read, saved, deleted)."""
+
+    __tablename__ = "group_message_status"
+    __table_args__ = (db.PrimaryKeyConstraint("msgID", "userID"),)
+
+    msgID = db.Column(
+        db.Integer,
+        db.ForeignKey("message.msgID", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    userID = db.Column(
+        db.Integer,
+        db.ForeignKey("user.userID", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    read_at = db.Column(db.DateTime, nullable=True, index=True)
+    saved_by_user = db.Column(db.Boolean, default=False, nullable=False)
+    deleted_for_user = db.Column(db.Boolean, default=False, nullable=False)
+
+    # Relationships
+    message = db.relationship("Message", backref=db.backref("group_statuses", cascade="all, delete-orphan"))
+    user = db.relationship("User")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "msgID": self.msgID,
+            "userID": self.userID,
+            "readAt": self.read_at.isoformat() if self.read_at else None,
+            "savedByUser": self.saved_by_user,
+            "deletedForUser": self.deleted_for_user,
+        }
+
+
+# ============================================================================
+# 10. BACKUP Table (Depends on USER)
 # ============================================================================
 class Backup(db.Model):
     """Encrypted backup storage for user data."""
@@ -535,5 +578,6 @@ __all__ = [
     "KeyVerification",
     "GroupMember",
     "Message",
+    "GroupMessageStatus",
     "Backup",
 ]

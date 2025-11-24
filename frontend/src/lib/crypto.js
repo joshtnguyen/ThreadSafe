@@ -528,3 +528,95 @@ function hexToArrayBuffer(hex) {
   }
   return bytes.buffer;
 }
+
+// ============================================================================
+// Group Encryption Functions
+// ============================================================================
+
+/**
+ * Generate a random AES-256 group key
+ * @returns {Promise<string>} Base64-encoded group key
+ */
+export async function generateGroupKey() {
+  const keyBytes = await generateAESKey();
+  return arrayBufferToBase64(keyBytes);
+}
+
+/**
+ * Encrypt group key for multiple members
+ * @param {string} groupKeyBase64 Base64-encoded group key
+ * @param {Array<{userId: number, publicKey: string}>} members Array of members with public keys
+ * @returns {Promise<Object>} Object mapping userId to encrypted key data
+ */
+export async function encryptGroupKeyForMembers(groupKeyBase64, members) {
+  const groupKeyBytes = base64ToArrayBuffer(groupKeyBase64);
+  const encryptedKeys = {};
+
+  for (const member of members) {
+    const memberId = member.id || member.userId; // Support both formats
+
+    if (!member.publicKey) {
+      console.error(`[ERROR] encryptGroupKeyForMembers: No public key for member ${memberId}`);
+      continue;
+    }
+
+    try {
+      const { encryptedAESKey, ephemeralPublicKey } = await encryptAESKey(
+        groupKeyBytes,
+        member.publicKey
+      );
+      encryptedKeys[memberId] = JSON.stringify({
+        encryptedAESKey,
+        ephemeralPublicKey,
+      });
+      console.log(`[DEBUG] encryptGroupKeyForMembers: Successfully encrypted key for member ${memberId}`);
+    } catch (error) {
+      console.error(`[ERROR] encryptGroupKeyForMembers: Failed to encrypt group key for user ${memberId}:`, error);
+    }
+  }
+
+  console.log(`[DEBUG] encryptGroupKeyForMembers: Generated keys for ${Object.keys(encryptedKeys).length} of ${members.length} members`);
+  return encryptedKeys;
+}
+
+/**
+ * Decrypt group key using private key
+ * @param {string} encryptedKeyData JSON string with encryptedAESKey and ephemeralPublicKey
+ * @param {CryptoKey} privateKey User's private key
+ * @returns {Promise<string>} Base64-encoded group key
+ */
+export async function decryptGroupKey(encryptedKeyData, privateKey) {
+  const { encryptedAESKey, ephemeralPublicKey } = JSON.parse(encryptedKeyData);
+  const groupKeyBytes = await decryptAESKey(encryptedAESKey, ephemeralPublicKey, privateKey);
+  return arrayBufferToBase64(groupKeyBytes);
+}
+
+/**
+ * Encrypt a message with group key
+ * @param {string} plaintext Message to encrypt
+ * @param {string} groupKeyBase64 Base64-encoded group key
+ * @returns {Promise<{encryptedContent: string, iv: string, hmac: string}>}
+ */
+export async function encryptGroupMessage(plaintext, groupKeyBase64) {
+  const groupKeyBytes = base64ToArrayBuffer(groupKeyBase64);
+  const { encryptedContent, iv } = await encryptMessage(plaintext, groupKeyBytes);
+
+  // AES-GCM includes authentication tag in the ciphertext, use iv as hmac placeholder
+  return {
+    encryptedContent,
+    iv,
+    hmac: iv, // GCM mode includes auth tag in ciphertext
+  };
+}
+
+/**
+ * Decrypt a message with group key
+ * @param {string} encryptedContent Base64-encoded ciphertext
+ * @param {string} iv Base64-encoded IV
+ * @param {string} groupKeyBase64 Base64-encoded group key
+ * @returns {Promise<string>} Decrypted plaintext
+ */
+export async function decryptGroupMessage(encryptedContent, iv, groupKeyBase64) {
+  const groupKeyBytes = base64ToArrayBuffer(groupKeyBase64);
+  return await decryptMessage(encryptedContent, iv, groupKeyBytes);
+}

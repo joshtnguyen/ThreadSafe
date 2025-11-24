@@ -15,6 +15,7 @@ export function WebSocketProvider({ children }) {
   const friendAcceptHandlersRef = useRef([]);
   const friendDeleteHandlersRef = useRef([]);
   const friendRejectHandlersRef = useRef([]);
+  const friendCancelHandlersRef = useRef([]);
   const blockedHandlersRef = useRef([]);
   const unblockedHandlersRef = useRef([]);
   const messageStatusHandlersRef = useRef([]);
@@ -22,6 +23,18 @@ export function WebSocketProvider({ children }) {
   const messageEditedHandlersRef = useRef([]);
   const messageUnsentHandlersRef = useRef([]);
   const messageSavedHandlersRef = useRef([]);
+  // Group chat handlers
+  const groupCreatedHandlersRef = useRef([]);
+  const groupMessageHandlersRef = useRef([]);
+  const groupMemberAddedHandlersRef = useRef([]);
+  const groupMemberRemovedHandlersRef = useRef([]);
+  const groupDeletedHandlersRef = useRef([]);
+  const groupMessageEditedHandlersRef = useRef([]);
+  const groupMessageUnsentHandlersRef = useRef([]);
+  const groupMessageReadHandlersRef = useRef([]);
+  const groupKeyRotatedHandlersRef = useRef([]);
+  const groupMessageDeletedHandlersRef = useRef([]);
+  const groupMessageSavedHandlersRef = useRef([]);
 
   useEffect(() => {
     // Only connect if user is logged in
@@ -97,6 +110,18 @@ export function WebSocketProvider({ children }) {
       }
     });
 
+    // Listen for friend request cancellations
+    newSocket.on("friend_request_cancelled_event", (data) => {
+      console.log("Friend request cancelled event received:", data);
+      if (data && data.canceller) {
+        console.log(`   Canceller data:`, data.canceller);
+        friendCancelHandlersRef.current.forEach((handler) => handler(data.canceller));
+        console.log(`   Notified ${friendCancelHandlersRef.current.length} handler(s)`);
+      } else {
+        console.warn("WARNING: Friend request cancelled event received but no canceller data:", data);
+      }
+    });
+
     newSocket.on("user_blocked_event", (data) => {
       if (data?.blocker) {
         blockedHandlersRef.current.forEach((handler) => handler(data.blocker));
@@ -131,6 +156,62 @@ export function WebSocketProvider({ children }) {
     newSocket.on("message_saved_event", (data) => {
       console.log("Message saved event received:", data);
       messageSavedHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    // Group chat events
+    newSocket.on("group_created_event", (data) => {
+      console.log("Group created event received:", data);
+      groupCreatedHandlersRef.current.forEach((handler) => handler(data.group));
+    });
+
+    newSocket.on("group_message_received", (data) => {
+      console.log("Group message received:", data);
+      groupMessageHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("group_member_added_event", (data) => {
+      console.log("Group member added event received:", data);
+      groupMemberAddedHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("group_member_removed_event", (data) => {
+      console.log("Group member removed event received:", data);
+      groupMemberRemovedHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("group_deleted_event", (data) => {
+      console.log("Group deleted event received:", data);
+      groupDeletedHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("group_message_edited_event", (data) => {
+      console.log("Group message edited event received:", data);
+      groupMessageEditedHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("group_message_unsent_event", (data) => {
+      console.log("Group message unsent event received:", data);
+      groupMessageUnsentHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("group_message_read_event", (data) => {
+      console.log("Group message read event received:", data);
+      groupMessageReadHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("group_key_rotated_event", (data) => {
+      console.log("Group key rotated event received:", data);
+      groupKeyRotatedHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("group_message_deleted_event", (data) => {
+      console.log("Group message deleted event received:", data);
+      groupMessageDeletedHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("group_message_saved_event", (data) => {
+      console.log("Group message saved event received:", data);
+      groupMessageSavedHandlersRef.current.forEach((handler) => handler(data));
     });
 
     setSocket(newSocket);
@@ -177,6 +258,13 @@ export function WebSocketProvider({ children }) {
     friendRejectHandlersRef.current = [...friendRejectHandlersRef.current, handler];
     return () => {
       friendRejectHandlersRef.current = friendRejectHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onFriendRequestCancelled = (handler) => {
+    friendCancelHandlersRef.current = [...friendCancelHandlersRef.current, handler];
+    return () => {
+      friendCancelHandlersRef.current = friendCancelHandlersRef.current.filter((h) => h !== handler);
     };
   };
 
@@ -229,6 +317,84 @@ export function WebSocketProvider({ children }) {
     };
   };
 
+  // Group chat handler registrations
+  const onGroupCreated = (handler) => {
+    groupCreatedHandlersRef.current = [...groupCreatedHandlersRef.current, handler];
+    return () => {
+      groupCreatedHandlersRef.current = groupCreatedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onGroupMessage = (handler) => {
+    groupMessageHandlersRef.current = [...groupMessageHandlersRef.current, handler];
+    return () => {
+      groupMessageHandlersRef.current = groupMessageHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onGroupMemberAdded = (handler) => {
+    groupMemberAddedHandlersRef.current = [...groupMemberAddedHandlersRef.current, handler];
+    return () => {
+      groupMemberAddedHandlersRef.current = groupMemberAddedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onGroupMemberRemoved = (handler) => {
+    groupMemberRemovedHandlersRef.current = [...groupMemberRemovedHandlersRef.current, handler];
+    return () => {
+      groupMemberRemovedHandlersRef.current = groupMemberRemovedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onGroupDeleted = (handler) => {
+    groupDeletedHandlersRef.current = [...groupDeletedHandlersRef.current, handler];
+    return () => {
+      groupDeletedHandlersRef.current = groupDeletedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onGroupMessageEdited = (handler) => {
+    groupMessageEditedHandlersRef.current = [...groupMessageEditedHandlersRef.current, handler];
+    return () => {
+      groupMessageEditedHandlersRef.current = groupMessageEditedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onGroupMessageUnsent = (handler) => {
+    groupMessageUnsentHandlersRef.current = [...groupMessageUnsentHandlersRef.current, handler];
+    return () => {
+      groupMessageUnsentHandlersRef.current = groupMessageUnsentHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onGroupMessageRead = (handler) => {
+    groupMessageReadHandlersRef.current = [...groupMessageReadHandlersRef.current, handler];
+    return () => {
+      groupMessageReadHandlersRef.current = groupMessageReadHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onGroupKeyRotated = (handler) => {
+    groupKeyRotatedHandlersRef.current = [...groupKeyRotatedHandlersRef.current, handler];
+    return () => {
+      groupKeyRotatedHandlersRef.current = groupKeyRotatedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onGroupMessageDeleted = (handler) => {
+    groupMessageDeletedHandlersRef.current = [...groupMessageDeletedHandlersRef.current, handler];
+    return () => {
+      groupMessageDeletedHandlersRef.current = groupMessageDeletedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
+  const onGroupMessageSaved = (handler) => {
+    groupMessageSavedHandlersRef.current = [...groupMessageSavedHandlersRef.current, handler];
+    return () => {
+      groupMessageSavedHandlersRef.current = groupMessageSavedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
   const value = {
     socket,
     isConnected,
@@ -237,6 +403,7 @@ export function WebSocketProvider({ children }) {
     onFriendRequestAccepted,
     onFriendDeleted,
     onFriendRequestRejected,
+    onFriendRequestCancelled,
     onUserBlocked,
     onUserUnblocked,
     onMessageStatusUpdate,
@@ -244,6 +411,18 @@ export function WebSocketProvider({ children }) {
     onMessageEdited,
     onMessageUnsent,
     onMessageSaved,
+    // Group chat handlers
+    onGroupCreated,
+    onGroupMessage,
+    onGroupMemberAdded,
+    onGroupMemberRemoved,
+    onGroupDeleted,
+    onGroupMessageEdited,
+    onGroupMessageUnsent,
+    onGroupMessageRead,
+    onGroupKeyRotated,
+    onGroupMessageDeleted,
+    onGroupMessageSaved,
   };
 
   return (

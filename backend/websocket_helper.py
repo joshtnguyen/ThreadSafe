@@ -48,6 +48,11 @@ def emit_friend_request_rejected(requester_id: int, rejector_data: dict):
     _post("/relay/friend-rejected", {"requesterId": requester_id, "rejector": rejector_data})
 
 
+def emit_friend_request_cancelled(recipient_id: int, canceller_data: dict):
+    """Emit a friend request cancellation notification."""
+    _post("/relay/friend-request-cancelled", {"recipientId": recipient_id, "canceller": canceller_data})
+
+
 def emit_user_blocked(blocked_user_id: int, blocker_data: dict):
     """Emit a notification that blocked_user_id was blocked by blocker_data."""
     _post("/relay/user-blocked", {"blockedUserId": blocked_user_id, "blocker": blocker_data})
@@ -90,3 +95,62 @@ def emit_message_saved(receiver_id: int, message_id: int, conversation_id: int, 
         "conversationId": conversation_id,
         "saved": saved
     })
+
+
+# ============================================================================
+# GROUP CHAT EVENTS
+# ============================================================================
+
+def emit_group_created(member_id: int, group_data: dict):
+    """Notify a user that they were added to a new group."""
+    _post("/relay/group-created", {"memberId": member_id, "group": group_data})
+
+
+def emit_group_message(member_id: int, message_data: dict):
+    """Emit a new group message to a member."""
+    _post("/relay/group-message", {"memberId": member_id, "data": message_data})
+
+
+def emit_group_member_added(member_id: int, data: dict):
+    """Notify existing members about a new member."""
+    _post("/relay/group-member-added", {"memberId": member_id, "data": data})
+
+
+def emit_group_member_removed(member_id: int, data: dict):
+    """Notify members about a removed member."""
+    _post("/relay/group-member-removed", {"memberId": member_id, "data": data})
+
+
+def emit_group_deleted(member_id: int, data: dict):
+    """Notify members that a group was deleted."""
+    _post("/relay/group-deleted", {"memberId": member_id, "data": data})
+
+
+def emit_group_message_edited(member_id: int, edit_data: dict):
+    """Notify members about an edited group message."""
+    _post("/relay/group-message-edited", {"memberId": member_id, "editData": edit_data})
+
+
+def emit_group_message_unsent(member_id: int, unsent_data: dict):
+    """Notify members about an unsent group message."""
+    _post("/relay/group-message-unsent", {"memberId": member_id, "unsentData": unsent_data})
+
+
+def emit_group_message_read(sender_id: int, read_data: dict):
+    """Notify sender about group message read status."""
+    _post("/relay/group-message-read", {"senderId": sender_id, "readData": read_data})
+
+
+def emit_group_key_rotated(member_id: int, key_data: dict):
+    """Notify members about a rotated group key."""
+    _post("/relay/group-key-rotated", {"memberId": member_id, "keyData": key_data})
+
+
+def emit_group_message_deleted(member_id: int, delete_data: dict):
+    """Notify a member about a deleted group message."""
+    _post("/relay/group-message-deleted", {"memberId": member_id, "deleteData": delete_data})
+
+
+def emit_group_message_saved(member_id: int, save_data: dict):
+    """Notify members about a saved/unsaved group message."""
+    _post("/relay/group-message-saved", {"memberId": member_id, "saveData": save_data})

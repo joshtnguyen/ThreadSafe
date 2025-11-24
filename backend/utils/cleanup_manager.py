@@ -5,8 +5,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import or_
 
 from ..database import db
-from ..models import Message, User
-from ..websocket_helper import emit_message_deleted
+from ..models import Message, User, GroupChat, GroupMember, GroupMessageStatus
+from ..websocket_helper import emit_message_deleted, emit_group_message_deleted
 
 
 def cleanup_expired_messages() -> dict:
@@ -27,11 +27,13 @@ def cleanup_expired_messages() -> dict:
     soft_deleted_count = 0
     messages_modified = 0
 
-    # Smart query: Only check messages that could actually expire
+    # Smart query: Only check 1-1 messages that could actually expire
     # Skip messages that are:
     # 1. Already deleted for both parties (nothing to do)
+    # 2. Group messages (handled by cleanup_expired_group_messages)
     # Note: We check per-user saved status later in the loop
     messages_to_check = Message.query.filter(
+        Message.groupChatID.is_(None),  # Only 1-1 messages
         or_(
             Message.deleted_for_sender == False,
             Message.deleted_for_receiver == False
@@ -135,6 +137,132 @@ def cleanup_expired_messages() -> dict:
         "messages_modified": messages_modified,
         "timestamp": now.isoformat(),
         "checked_count": len(messages_to_check),
+    }
+
+
+def cleanup_expired_group_messages() -> dict:
+    """
+    Delete expired group messages based on owner-driven deletion logic.
+
+    Group Message Deletion Rules:
+    1. If ANY member saves the message → Never delete
+    2. All members read → Use owner's retention from when all read
+    3. Not all read → Mark deleted at (sent_time + 24 hours)
+    4. Actually delete when all members have deleted_for_user=True
+
+    Returns:
+        dict: Statistics about deleted/soft-deleted group messages
+    """
+    now = datetime.utcnow()
+    hard_deleted_count = 0
+    soft_deleted_count = 0
+    messages_modified = 0
+
+    # Get all group messages that haven't been fully deleted
+    group_messages = Message.query.filter(
+        Message.groupChatID.isnot(None),
+        Message.is_unsent == False
+    ).all()
+
+    print(f"Checking {len(group_messages)} group messages for cleanup")
+
+    for message in group_messages:
+        group = message.group
+        if not group:
+            continue
+
+        members = GroupMember.query.filter_by(groupChatID=group.groupChatID).all()
+        member_ids = [m.userID for m in members]
+
+        if not member_ids:
+            continue
+
+        # Get or create status for each member
+        statuses = {}
+        for member_id in member_ids:
+            status = GroupMessageStatus.query.filter_by(
+                msgID=message.msgID,
+                userID=member_id
+            ).first()
+            if not status:
+                status = GroupMessageStatus(
+                    msgID=message.msgID,
+                    userID=member_id
+                )
+                db.session.add(status)
+            statuses[member_id] = status
+
+        # Check if any member has saved the message
+        is_saved = any(s.saved_by_user for s in statuses.values())
+        if is_saved:
+            print(f"  Group message {message.msgID}: Saved by a member - skipping deletion")
+            continue
+
+        # Check if all members already have it deleted
+        all_deleted = all(s.deleted_for_user for s in statuses.values())
+        if all_deleted:
+            # Delete all GroupMessageStatus records first (to avoid FK constraint)
+            for status in statuses.values():
+                db.session.delete(status)
+            # Hard delete the message
+            db.session.delete(message)
+            hard_deleted_count += 1
+            messages_modified += 1
+            continue
+
+        # Get owner for retention settings
+        owner_member = next((m for m in members if m.role == "Owner"), None)
+        owner = User.query.get(owner_member.userID) if owner_member else None
+        owner_retention_hours = 24  # Default
+        if owner and owner.settings:
+            owner_retention_hours = owner.settings.get('messageRetentionHours', 24)
+
+        # Check if all members have read the message
+        all_read = all(s.read_at is not None for s in statuses.values())
+
+        if all_read:
+            # Use owner's retention from when all read
+            latest_read = max(s.read_at for s in statuses.values())
+            deletion_time = latest_read + timedelta(hours=owner_retention_hours)
+            print(f"  Group message {message.msgID}: All read, owner retention={owner_retention_hours}h, deletes at {deletion_time}")
+
+            if now >= deletion_time:
+                # Soft delete for all members
+                for member_id, status in statuses.items():
+                    if not status.deleted_for_user:
+                        status.deleted_for_user = True
+                        soft_deleted_count += 1
+                        emit_group_message_deleted(member_id, {
+                            "groupChatID": group.groupChatID,
+                            "messageId": message.msgID,
+                        })
+                messages_modified += 1
+        else:
+            # Not all read: 24-hour fallback
+            fallback_time = message.timeStamp + timedelta(hours=24)
+            print(f"  Group message {message.msgID}: Not all read, fallback deletes at {fallback_time}")
+
+            if now >= fallback_time:
+                # Soft delete for all members
+                for member_id, status in statuses.items():
+                    if not status.deleted_for_user:
+                        status.deleted_for_user = True
+                        soft_deleted_count += 1
+                        emit_group_message_deleted(member_id, {
+                            "groupChatID": group.groupChatID,
+                            "messageId": message.msgID,
+                        })
+                messages_modified += 1
+
+    if messages_modified > 0:
+        db.session.commit()
+
+    return {
+        "hard_deleted_count": hard_deleted_count,
+        "soft_deleted_count": soft_deleted_count,
+        "messages_modified": messages_modified,
+        "timestamp": now.isoformat(),
+        "checked_count": len(group_messages),
     }
 
 

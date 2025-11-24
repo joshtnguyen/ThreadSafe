@@ -29,6 +29,7 @@
   --bubble-own-text: #202020;
   --bubble-meta-own: rgba(0, 0, 0, 0.55);
   --bubble-time-own: rgba(0, 0, 0, 0.6);
+  --status-pending: #6b7280;
 }
 
 :root[data-theme="light"] {
@@ -57,6 +58,7 @@
   --bubble-own-text: #f7f9fb;
   --bubble-meta-own: rgba(255, 255, 255, 0.78);
   --bubble-time-own: rgba(255, 255, 255, 0.72);
+  --status-pending: #9ca3af;
 }
 
 * {
