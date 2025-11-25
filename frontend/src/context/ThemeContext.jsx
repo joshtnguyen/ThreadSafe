@@ -11,25 +11,35 @@ import { useAuth } from "./AuthContext.jsx";
 
 const ThemeContext = createContext(null);
 
-const STORAGE_KEY = "threadsafe:theme";
+const STORAGE_KEY_PREFIX = "threadsafe:theme:user:";
 const DEFAULT_THEME = "dark";
 
-function getStoredTheme() {
+function getUserThemeKey(userId) {
+  return userId ? `${STORAGE_KEY_PREFIX}${userId}` : null;
+}
+
+function getStoredTheme(userId) {
+  // If no user is logged in, always return dark theme
+  if (!userId) {
+    return DEFAULT_THEME;
+  }
+
   if (typeof window === "undefined") {
     return DEFAULT_THEME;
   }
+
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === "light" || stored === "dark") {
-      return stored;
+    const key = getUserThemeKey(userId);
+    if (key) {
+      const stored = localStorage.getItem(key);
+      if (stored === "light" || stored === "dark") {
+        return stored;
+      }
     }
   } catch {
     // Ignore storage errors (private mode, etc.)
   }
-  const media = window.matchMedia?.("(prefers-color-scheme: dark)");
-  if (media) {
-    return media.matches ? "dark" : "light";
-  }
+
   return DEFAULT_THEME;
 }
 
@@ -55,24 +65,43 @@ function applyTheme(theme) {
 export function ThemeProvider({ children }) {
   const { user } = useAuth();
   const [theme, setThemeState] = useState(() => {
-    return user?.settings?.theme ?? getStoredTheme();
+    // If user is logged in, use their settings or stored preference
+    // If not logged in, always use dark theme
+    if (user) {
+      return user.settings?.theme ?? getStoredTheme(user.id);
+    }
+    return DEFAULT_THEME;
   });
 
   useEffect(() => {
-    const preferred = user?.settings?.theme;
-    if (preferred && preferred !== theme) {
-      setThemeState(preferred);
+    if (user) {
+      // User is logged in - use their preference
+      const preferred = user.settings?.theme ?? getStoredTheme(user.id);
+      if (preferred !== theme) {
+        setThemeState(preferred);
+      }
+    } else {
+      // User is logged out - always use dark theme
+      if (theme !== DEFAULT_THEME) {
+        setThemeState(DEFAULT_THEME);
+      }
     }
-  }, [theme, user?.settings?.theme]);
+  }, [user, user?.id, user?.settings?.theme]);
 
   useEffect(() => {
     applyTheme(theme);
-    try {
-      localStorage.setItem(STORAGE_KEY, theme);
-    } catch {
-      // Ignore storage write errors
+    // Only save to localStorage if user is logged in
+    if (user?.id) {
+      try {
+        const key = getUserThemeKey(user.id);
+        if (key) {
+          localStorage.setItem(key, theme);
+        }
+      } catch {
+        // Ignore storage write errors
+      }
     }
-  }, [theme]);
+  }, [theme, user?.id]);
 
   const updateTheme = useCallback((nextTheme) => {
     setThemeState(nextTheme === "light" ? "light" : "dark");

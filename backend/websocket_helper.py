@@ -154,3 +154,8 @@ def emit_group_message_deleted(member_id: int, delete_data: dict):
 def emit_group_message_saved(member_id: int, save_data: dict):
     """Notify members about a saved/unsaved group message."""
     _post("/relay/group-message-saved", {"memberId": member_id, "saveData": save_data})
+
+
+def emit_group_updated(member_id: int, update_data: dict):
+    """Notify members about group updates (name, profile picture, etc.)."""
+    _post("/relay/group-updated", {"memberId": member_id, "updateData": update_data})

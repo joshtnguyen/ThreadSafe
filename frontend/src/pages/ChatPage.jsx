@@ -75,6 +75,7 @@ export default function ChatPage() {
     onGroupKeyRotated,
     onGroupMessageDeleted,
     onGroupMessageSaved,
+    onGroupUpdated,
   } = useWebSocket();
 
   const [conversations, setConversations] = useState([]);
@@ -138,6 +139,13 @@ export default function ChatPage() {
   const [groupMenuPosition, setGroupMenuPosition] = useState({ x: 0, y: 0 });
   const [hoveredGroupMembers, setHoveredGroupMembers] = useState(null); // Track which group's member tooltip is shown
   const [memberTooltipPosition, setMemberTooltipPosition] = useState({ x: 0, y: 0 });
+  const [isEditGroupPicModalOpen, setIsEditGroupPicModalOpen] = useState(false);
+  const [editGroupPicForm, setEditGroupPicForm] = useState({ groupId: null, profilePic: null, groupName: null });
+  const editGroupPicInputRef = useRef(null);
+  const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
+  const [addMemberForm, setAddMemberForm] = useState({ groupId: null, selectedFriends: [] });
+  const [isRemoveMemberModalOpen, setIsRemoveMemberModalOpen] = useState(false);
+  const [removeMemberForm, setRemoveMemberForm] = useState({ groupId: null, selectedMember: null });
 
   const messageEndRef = useRef(null);
   const friendDropdownRef = useRef(null);
@@ -1027,6 +1035,21 @@ export default function ChatPage() {
     });
     return unsubscribe;
   }, [onGroupDeleted, selectedGroupId]);
+
+  // Listen for group updates (profile picture, name, etc.)
+  useEffect(() => {
+    const unsubscribe = onGroupUpdated((data) => {
+      const { groupChatID, groupName, profilePicUrl } = data;
+      setGroups((prev) =>
+        prev.map((g) =>
+          g.groupChatID === groupChatID
+            ? { ...g, groupName: groupName || g.groupName, profilePicUrl: profilePicUrl !== undefined ? profilePicUrl : g.profilePicUrl }
+            : g
+        )
+      );
+    });
+    return unsubscribe;
+  }, [onGroupUpdated]);
 
   // Listen for group message edits
   useEffect(() => {
@@ -2349,6 +2372,124 @@ export default function ChatPage() {
     }
   };
 
+  const handleEditGroupPicture = async () => {
+    if (!editGroupPicForm.groupId) return;
+
+    try {
+      await api.updateGroup(token, editGroupPicForm.groupId, {
+        profilePicUrl: editGroupPicForm.profilePic,
+      });
+
+      // Update local state
+      setGroups((prev) =>
+        prev.map((g) =>
+          g.groupChatID === editGroupPicForm.groupId
+            ? { ...g, profilePicUrl: editGroupPicForm.profilePic }
+            : g
+        )
+      );
+
+      setToast({ message: "✓ Group picture updated.", tone: "success" });
+      setIsEditGroupPicModalOpen(false);
+      setEditGroupPicForm({ groupId: null, profilePic: null, groupName: null });
+    } catch (error) {
+      setToast({ message: `Failed to update group picture: ${error.message}`, tone: "error" });
+    }
+  };
+
+  const handleAddMember = async () => {
+    if (!addMemberForm.groupId || addMemberForm.selectedFriends.length === 0) {
+      setToast({ message: "Please select at least one friend to add.", tone: "error" });
+      return;
+    }
+
+    try {
+      // Get the current group key
+      let groupKey = groupKeysRef.current[addMemberForm.groupId];
+      if (!groupKey) {
+        // Load from API if not in cache
+        const response = await api.getGroupKey(token, addMemberForm.groupId);
+        groupKey = await decryptGroupKey(response.encryptedGroupKey);
+        groupKeysRef.current[addMemberForm.groupId] = groupKey;
+        setGroupKeys((prev) => ({ ...prev, [addMemberForm.groupId]: groupKey }));
+      }
+
+      // Get public keys for new members
+      const membersWithKeys = await Promise.all(
+        addMemberForm.selectedFriends.map(async (memberId) => {
+          // Check cache first
+          if (publicKeyCache.current[memberId]) {
+            return { id: memberId, publicKey: publicKeyCache.current[memberId] };
+          }
+          const response = await api.getPublicKey(token, memberId);
+          const publicKey = response.key?.publicKey;
+          if (publicKey) {
+            publicKeyCache.current[memberId] = publicKey;
+          }
+          return { id: memberId, publicKey };
+        })
+      );
+
+      // Encrypt the group key for each new member
+      const encryptedKeys = await encryptGroupKeyForMembers(groupKey, membersWithKeys);
+
+      // Add members via API
+      await api.addGroupMembers(token, addMemberForm.groupId, addMemberForm.selectedFriends, encryptedKeys);
+
+      // Update local group state with new members
+      setGroups((prev) =>
+        prev.map((g) => {
+          if (g.groupChatID === addMemberForm.groupId) {
+            // Add new member IDs to the group's members list
+            const newMembers = addMemberForm.selectedFriends.map((id) => ({
+              userID: id,
+              role: "Member",
+            }));
+            return { ...g, members: [...g.members, ...newMembers] };
+          }
+          return g;
+        })
+      );
+
+      setToast({ message: `✓ Added ${addMemberForm.selectedFriends.length} member(s).`, tone: "success" });
+      setIsAddMemberModalOpen(false);
+      setAddMemberForm({ groupId: null, selectedFriends: [] });
+    } catch (error) {
+      setToast({ message: `Failed to add members: ${error.message}`, tone: "error" });
+    }
+  };
+
+  const handleRemoveMember = async () => {
+    if (!removeMemberForm.groupId || !removeMemberForm.selectedMember) {
+      setToast({ message: "Please select a member to remove.", tone: "error" });
+      return;
+    }
+
+    try {
+      // Remove member via API
+      await api.removeGroupMember(token, removeMemberForm.groupId, removeMemberForm.selectedMember);
+
+      // Update local group state
+      setGroups((prev) =>
+        prev.map((g) => {
+          if (g.groupChatID === removeMemberForm.groupId) {
+            return {
+              ...g,
+              members: g.members.filter((m) => m.userID !== removeMemberForm.selectedMember),
+            };
+          }
+          return g;
+        })
+      );
+
+      setToast({ message: "✓ Member removed.", tone: "success" });
+      setIsRemoveMemberModalOpen(false);
+      setRemoveMemberForm({ groupId: null, selectedMember: null });
+    } catch (error) {
+      setToast({ message: `Failed to remove member: ${error.message}`, tone: "error" });
+    }
+  };
+
   const rotateGroupKey = async (groupId, memberIds) => {
     try {
       // Generate new group key
@@ -2935,13 +3076,12 @@ export default function ChatPage() {
                     width: "64px",
                     height: "64px",
                     borderRadius: "50%",
-                    background: createGroupForm.profilePic ? "transparent" : "var(--accent)",
+                    background: createGroupForm.profilePic ? "transparent" : "#d3d3d3",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     cursor: "pointer",
                     overflow: "hidden",
-                    border: "2px dashed var(--card-border)",
                     flexShrink: 0,
                   }}
                   title="Click to add group picture"
@@ -2949,7 +3089,9 @@ export default function ChatPage() {
                   {createGroupForm.profilePic ? (
                     <img src={createGroupForm.profilePic} alt="Group" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   ) : (
-                    <span style={{ fontSize: "1.5rem", color: "var(--button-primary-text)" }}>+</span>
+                    <span style={{ fontSize: "1.8rem", color: "#555", fontWeight: 600 }}>
+                      {createGroupForm.name.trim() ? createGroupForm.name.charAt(0).toUpperCase() : "+"}
+                    </span>
                   )}
                 </div>
                 <div>
@@ -3082,8 +3224,8 @@ export default function ChatPage() {
                 onClick={handleCreateGroup}
                 disabled={isCreatingGroup || !createGroupForm.name.trim() || createGroupForm.memberIds.length === 0}
                 style={{
-                  background: "var(--accent)",
-                  color: "var(--button-primary-text)",
+                  background: createGroupForm.name.trim() && createGroupForm.memberIds.length > 0 ? "var(--accent)" : "#e0e0e0",
+                  color: createGroupForm.name.trim() && createGroupForm.memberIds.length > 0 ? "var(--button-primary-text)" : "#999",
                   border: "none",
                   borderRadius: "8px",
                   padding: "10px 20px",
@@ -3094,6 +3236,388 @@ export default function ChatPage() {
                 }}
               >
                 {isCreatingGroup ? "Creating..." : "Create Group"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isEditGroupPicModalOpen && (
+        <div className="settings-overlay" onClick={() => setIsEditGroupPicModalOpen(false)}>
+          <div
+            className="settings-modal"
+            onClick={(event) => event.stopPropagation()}
+            style={{ maxWidth: "400px" }}
+          >
+            <header className="settings-modal-header">
+              <div>
+                <h2>Edit Group Picture</h2>
+                <p>Update the profile picture for this group.</p>
+              </div>
+              <button
+                type="button"
+                className="settings-close"
+                onClick={() => setIsEditGroupPicModalOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <div style={{ padding: "20px 0" }}>
+              <input
+                ref={editGroupPicInputRef}
+                type="file"
+                accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (file.size > 500 * 1024) {
+                    setToast({ message: "Image too large. Maximum size is 500KB.", tone: "error" });
+                    return;
+                  }
+                  const reader = new FileReader();
+                  reader.onload = (event) => {
+                    setEditGroupPicForm((prev) => ({ ...prev, profilePic: event.target.result }));
+                  };
+                  reader.readAsDataURL(file);
+                  e.target.value = "";
+                }}
+              />
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "16px" }}>
+                <div
+                  onClick={() => editGroupPicInputRef.current?.click()}
+                  style={{
+                    width: "120px",
+                    height: "120px",
+                    borderRadius: "50%",
+                    background: editGroupPicForm.profilePic ? "transparent" : "#d3d3d3",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    overflow: "hidden",
+                    border: "2px dashed var(--card-border)",
+                  }}
+                  title="Click to change picture"
+                >
+                  {editGroupPicForm.profilePic ? (
+                    <img src={editGroupPicForm.profilePic} alt="Group" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    <span style={{ fontSize: "3rem", color: "#555", fontWeight: 600 }}>
+                      {editGroupPicForm.groupName?.charAt(0).toUpperCase() || "+"}
+                    </span>
+                  )}
+                </div>
+                <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--text-muted)", textAlign: "center" }}>
+                  Click to upload (max 500KB)
+                </p>
+                {editGroupPicForm.profilePic && (
+                  <button
+                    type="button"
+                    onClick={() => setEditGroupPicForm((prev) => ({ ...prev, profilePic: null }))}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "#ff6b6b",
+                      fontSize: "0.85rem",
+                      cursor: "pointer",
+                      padding: "4px 0",
+                    }}
+                  >
+                    Remove Picture
+                  </button>
+                )}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="ghost-button inline"
+                onClick={() => {
+                  setIsEditGroupPicModalOpen(false);
+                  setEditGroupPicForm({ groupId: null, profilePic: null, groupName: null });
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleEditGroupPicture}
+                style={{
+                  background: "#000000",
+                  color: "var(--button-primary-text)",
+                  border: "none",
+                  borderRadius: "8px",
+                  padding: "10px 20px",
+                  fontSize: "0.9rem",
+                  fontWeight: 500,
+                  cursor: "pointer",
+                }}
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isAddMemberModalOpen && (
+        <div className="settings-overlay" onClick={() => setIsAddMemberModalOpen(false)}>
+          <div
+            className="settings-modal"
+            onClick={(event) => event.stopPropagation()}
+            style={{ maxWidth: "500px" }}
+          >
+            <header className="settings-modal-header">
+              <div>
+                <h2>Add Members</h2>
+                <p>Select friends to add to this group.</p>
+              </div>
+              <button
+                type="button"
+                className="settings-close"
+                onClick={() => setIsAddMemberModalOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <div style={{ padding: "20px 0", maxHeight: "60vh", overflowY: "auto" }}>
+              <div className="form-group">
+                <label style={{ display: "block", marginBottom: "8px", fontWeight: 500 }}>
+                  Select Friends ({addMemberForm.selectedFriends.length} selected)
+                </label>
+                <div
+                  style={{
+                    maxHeight: "300px",
+                    overflowY: "auto",
+                    border: "1px solid var(--card-border)",
+                    borderRadius: "8px",
+                    padding: "8px",
+                  }}
+                >
+                  {(() => {
+                    // Get current group
+                    const currentGroup = groups.find((g) => g.groupChatID === addMemberForm.groupId);
+                    if (!currentGroup) return <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "16px" }}>Group not found.</p>;
+
+                    // Get list of current member IDs
+                    const currentMemberIds = currentGroup.members.map((m) => m.userID);
+
+                    // Filter friends who are NOT in the group
+                    const availableFriends = friends.filter((friend) => !currentMemberIds.includes(friend.id));
+
+                    if (availableFriends.length === 0) {
+                      return <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "16px" }}>All your friends are already in this group!</p>;
+                    }
+
+                    return availableFriends.map((friend) => {
+                      const isSelected = addMemberForm.selectedFriends.includes(friend.id);
+                      return (
+                        <label
+                          key={friend.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "12px",
+                            padding: "10px 12px",
+                            cursor: "pointer",
+                            borderRadius: "6px",
+                            background: isSelected ? "var(--accent-soft)" : "transparent",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              setAddMemberForm((prev) => {
+                                const newSelected = isSelected
+                                  ? prev.selectedFriends.filter((id) => id !== friend.id)
+                                  : [...prev.selectedFriends, friend.id];
+                                return { ...prev, selectedFriends: newSelected };
+                              });
+                            }}
+                          />
+                          <div className="conversation-avatar" style={{ width: "32px", height: "32px", fontSize: "0.8rem" }}>
+                            {friend.profilePicUrl ? (
+                              <img src={friend.profilePicUrl} alt={friend.username} className="avatar-image" />
+                            ) : (
+                              friend.displayName?.charAt(0).toUpperCase() || friend.username?.charAt(0).toUpperCase()
+                            )}
+                          </div>
+                          <div>
+                            <span style={{ fontWeight: 500 }}>{friend.displayName || friend.username}</span>
+                            {friend.displayName && (
+                              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginLeft: "6px" }}>
+                                @{friend.username}
+                              </span>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="ghost-button inline"
+                onClick={() => {
+                  setIsAddMemberModalOpen(false);
+                  setAddMemberForm({ groupId: null, selectedFriends: [] });
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAddMember}
+                disabled={addMemberForm.selectedFriends.length === 0}
+                style={{
+                  background: addMemberForm.selectedFriends.length > 0 ? "#000000" : "var(--accent)",
+                  color: "var(--button-primary-text)",
+                  border: "none",
+                  borderRadius: "8px",
+                  padding: "10px 20px",
+                  fontSize: "0.9rem",
+                  fontWeight: 500,
+                  cursor: addMemberForm.selectedFriends.length === 0 ? "not-allowed" : "pointer",
+                  opacity: addMemberForm.selectedFriends.length === 0 ? 0.5 : 1,
+                }}
+              >
+                Add Members
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isRemoveMemberModalOpen && (
+        <div className="settings-overlay" onClick={() => setIsRemoveMemberModalOpen(false)}>
+          <div
+            className="settings-modal"
+            onClick={(event) => event.stopPropagation()}
+            style={{ maxWidth: "450px" }}
+          >
+            <header className="settings-modal-header">
+              <div>
+                <h2>Remove Member</h2>
+                <p>Select a member to remove from this group.</p>
+              </div>
+              <button
+                type="button"
+                className="settings-close"
+                onClick={() => setIsRemoveMemberModalOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <div style={{ padding: "20px 0", maxHeight: "60vh", overflowY: "auto" }}>
+              <div className="form-group">
+                <label style={{ display: "block", marginBottom: "8px", fontWeight: 500 }}>
+                  Select Member to Remove
+                </label>
+                <div
+                  style={{
+                    maxHeight: "300px",
+                    overflowY: "auto",
+                    border: "1px solid var(--card-border)",
+                    borderRadius: "8px",
+                    padding: "8px",
+                  }}
+                >
+                  {(() => {
+                    // Get current group
+                    const currentGroup = groups.find((g) => g.groupChatID === removeMemberForm.groupId);
+                    if (!currentGroup) return <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "16px" }}>Group not found.</p>;
+
+                    // Filter out the owner (can't remove owner)
+                    const removableMembers = currentGroup.members.filter((m) => m.role !== "Owner");
+
+                    if (removableMembers.length === 0) {
+                      return <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "16px" }}>No members to remove.</p>;
+                    }
+
+                    return removableMembers.map((member) => {
+                      const isSelected = removeMemberForm.selectedMember === member.userID;
+                      // Find friend info for this member
+                      const friendInfo = friends.find((f) => f.id === member.userID);
+                      const displayName = friendInfo?.displayName || friendInfo?.username || `User ${member.userID}`;
+                      const username = friendInfo?.username;
+                      const profilePicUrl = friendInfo?.profilePicUrl;
+
+                      return (
+                        <label
+                          key={member.userID}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "12px",
+                            padding: "10px 12px",
+                            cursor: "pointer",
+                            borderRadius: "6px",
+                            background: isSelected ? "#fff1f1" : "transparent",
+                            border: isSelected ? "1px solid #ffcccb" : "1px solid transparent",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              setRemoveMemberForm((prev) => ({
+                                ...prev,
+                                selectedMember: isSelected ? null : member.userID,
+                              }));
+                            }}
+                          />
+                          <div className="conversation-avatar" style={{ width: "32px", height: "32px", fontSize: "0.8rem" }}>
+                            {profilePicUrl ? (
+                              <img src={profilePicUrl} alt={displayName} className="avatar-image" />
+                            ) : (
+                              displayName.charAt(0).toUpperCase()
+                            )}
+                          </div>
+                          <div>
+                            <span style={{ fontWeight: 500 }}>{displayName}</span>
+                            {username && displayName !== username && (
+                              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginLeft: "6px" }}>
+                                @{username}
+                              </span>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="ghost-button inline"
+                onClick={() => {
+                  setIsRemoveMemberModalOpen(false);
+                  setRemoveMemberForm({ groupId: null, selectedMember: null });
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleRemoveMember}
+                disabled={!removeMemberForm.selectedMember}
+                style={{
+                  background: "#d32f2f",
+                  color: "#ffffff",
+                  border: "none",
+                  borderRadius: "8px",
+                  padding: "10px 20px",
+                  fontSize: "0.9rem",
+                  fontWeight: 600,
+                  cursor: !removeMemberForm.selectedMember ? "not-allowed" : "pointer",
+                  opacity: !removeMemberForm.selectedMember ? 0.5 : 1,
+                }}
+              >
+                Remove Member
               </button>
             </div>
           </div>
@@ -3679,11 +4203,13 @@ export default function ChatPage() {
                           }}
                           style={{ paddingRight: "40px" }}
                         >
-                          <div className="conversation-avatar" style={{ background: "var(--accent)" }}>
+                          <div className="conversation-avatar" style={{ background: group.profilePicUrl ? "transparent" : "#d3d3d3" }}>
                             {group.profilePicUrl ? (
                               <img src={group.profilePicUrl} alt="Group" className="avatar-image" />
                             ) : (
-                              group.groupName?.charAt(0).toUpperCase()
+                              <span style={{ color: "#555", fontSize: "1.2rem", fontWeight: 600 }}>
+                                {group.groupName?.charAt(0).toUpperCase()}
+                              </span>
                             )}
                           </div>
                           <div className="conversation-copy">
@@ -3792,26 +4318,100 @@ export default function ChatPage() {
                             onClick={(e) => e.stopPropagation()}
                           >
                             {isOwner ? (
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteGroup(group.groupChatID)}
-                                style={{
-                                  width: "100%",
-                                  padding: "10px 12px",
-                                  border: "none",
-                                  background: "#fff1f1",
-                                  textAlign: "left",
-                                  cursor: "pointer",
-                                  color: "#d32f2f",
-                                  borderRadius: "4px",
-                                  fontWeight: 600,
-                                  transition: "background-color 0.15s ease",
-                                }}
-                                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#ffe1e1")}
-                                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#fff1f1")}
-                              >
-                                Delete
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditGroupPicForm({ groupId: group.groupChatID, profilePic: group.profilePicUrl, groupName: group.groupName });
+                                    setIsEditGroupPicModalOpen(true);
+                                    setGroupMenuOpen(null);
+                                  }}
+                                  style={{
+                                    width: "100%",
+                                    padding: "10px 12px",
+                                    border: "none",
+                                    background: "#f5f5f5",
+                                    textAlign: "left",
+                                    cursor: "pointer",
+                                    color: "#333",
+                                    borderRadius: "4px",
+                                    fontWeight: 500,
+                                    transition: "background-color 0.15s ease",
+                                  }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#e8e8e8")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#f5f5f5")}
+                                >
+                                  Edit Profile Picture
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAddMemberForm({ groupId: group.groupChatID, selectedFriends: [] });
+                                    setIsAddMemberModalOpen(true);
+                                    setGroupMenuOpen(null);
+                                  }}
+                                  style={{
+                                    width: "100%",
+                                    padding: "10px 12px",
+                                    border: "none",
+                                    background: "#f5f5f5",
+                                    textAlign: "left",
+                                    cursor: "pointer",
+                                    color: "#333",
+                                    borderRadius: "4px",
+                                    fontWeight: 500,
+                                    transition: "background-color 0.15s ease",
+                                  }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#e8e8e8")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#f5f5f5")}
+                                >
+                                  Add Member
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRemoveMemberForm({ groupId: group.groupChatID, selectedMember: null });
+                                    setIsRemoveMemberModalOpen(true);
+                                    setGroupMenuOpen(null);
+                                  }}
+                                  style={{
+                                    width: "100%",
+                                    padding: "10px 12px",
+                                    border: "none",
+                                    background: "#f5f5f5",
+                                    textAlign: "left",
+                                    cursor: "pointer",
+                                    color: "#333",
+                                    borderRadius: "4px",
+                                    fontWeight: 500,
+                                    transition: "background-color 0.15s ease",
+                                  }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#e8e8e8")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#f5f5f5")}
+                                >
+                                  Remove Member
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteGroup(group.groupChatID)}
+                                  style={{
+                                    width: "100%",
+                                    padding: "10px 12px",
+                                    border: "none",
+                                    background: "#fff1f1",
+                                    textAlign: "left",
+                                    cursor: "pointer",
+                                    color: "#d32f2f",
+                                    borderRadius: "4px",
+                                    fontWeight: 600,
+                                    transition: "background-color 0.15s ease",
+                                  }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#ffe1e1")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#fff1f1")}
+                                >
+                                  Delete
+                                </button>
+                              </>
                             ) : (
                               <button
                                 type="button"

@@ -455,6 +455,19 @@ def relay_group_message_saved_http():
     return jsonify({'status': 'ok'}), 200
 
 
+@app.post('/relay/group-updated')
+def relay_group_updated_http():
+    _verify_api_request()
+    data = request.get_json(silent=True) or {}
+    member_id = data.get('memberId')
+    update_data = data.get('updateData')
+    if not member_id or not update_data:
+        return jsonify({'message': 'memberId and updateData required'}), 400
+    print(f'Emitting group_updated_event to user_{member_id} for group {update_data.get("groupChatID")}')
+    socketio.emit('group_updated_event', update_data, room=f'user_{member_id}')
+    return jsonify({'status': 'ok'}), 200
+
+
 if __name__ == '__main__':
     print('Starting TLS Relay Server on port 5001...')
     socketio.run(app, host='0.0.0.0', port=5001, debug=True)

@@ -276,6 +276,17 @@ def update_group(group_id: int):
 
     db.session.commit()
 
+    # Notify all members about the group update
+    from backend.websocket_helper import emit_group_updated
+    update_data = {
+        "groupChatID": group_id,
+        "groupName": group.groupName,
+        "profilePicUrl": group.profile_pic_url,
+    }
+    for member in group.members:
+        if member.userID != current_user_id:
+            emit_group_updated(member.userID, update_data)
+
     return jsonify({
         "message": "Group updated successfully.",
         "group": group.to_dict(include_members=True),
@@ -1057,6 +1068,9 @@ def save_group_message(group_id: int, message_id: int):
     """
     Star/save a group message for backup.
 
+    Saved messages are exempt from auto-deletion and kept forever.
+    When unsaving, the deletion timer is reset to start from the current time.
+
     Request body:
     - saved: bool
     """
@@ -1086,6 +1100,14 @@ def save_group_message(group_id: int, message_id: int):
         db.session.add(status)
 
     status.saved_by_user = bool(saved)
+
+    # When unsaving, set timer_reset_at to restart the deletion timer from now
+    # When saving, clear timer_reset_at so it doesn't interfere
+    if not saved:
+        status.timer_reset_at = datetime.utcnow()
+    else:
+        status.timer_reset_at = None
+
     db.session.commit()
 
     # Notify all group members about the save status change

@@ -547,6 +547,7 @@ def toggle_save_message(conversation_id: int, message_id: int):
 
     Saved messages are exempt from auto-deletion and kept forever for both users.
     When one user saves/unsaves, the state mirrors for the other participant.
+    When unsaving, the deletion timer is reset to start from the current time.
     """
     current_user_id = _current_user_id()
     payload = request.get_json(silent=True) or {}
@@ -565,6 +566,13 @@ def toggle_save_message(conversation_id: int, message_id: int):
     is_sender = message.senderID == current_user_id
     message.saved_by_sender = bool(saved)
     message.saved_by_receiver = bool(saved)
+
+    # When unsaving, set timer_reset_at to restart the deletion timer from now
+    # When saving, clear timer_reset_at so it doesn't interfere
+    if not saved:
+        message.timer_reset_at = datetime.utcnow()
+    else:
+        message.timer_reset_at = None
 
     db.session.commit()
 

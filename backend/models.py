@@ -380,6 +380,8 @@ class Message(db.Model):
     read_by_receiver_at = db.Column(db.DateTime, nullable=True, index=True)
     saved_by_sender = db.Column(db.Boolean, default=False, nullable=False, index=True)
     saved_by_receiver = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    # Timer reset: When a user unsaves a message, reset the deletion timer from this timestamp
+    timer_reset_at = db.Column(db.DateTime, nullable=True, index=True)
 
     # Per-user soft delete (each user controls when message disappears for them)
     deleted_for_sender = db.Column(db.Boolean, default=False, nullable=False, index=True)
@@ -515,6 +517,8 @@ class GroupMessageStatus(db.Model):
     read_at = db.Column(db.DateTime, nullable=True, index=True)
     saved_by_user = db.Column(db.Boolean, default=False, nullable=False)
     deleted_for_user = db.Column(db.Boolean, default=False, nullable=False)
+    # Timer reset: When a user unsaves a message, reset the deletion timer from this timestamp
+    timer_reset_at = db.Column(db.DateTime, nullable=True, index=True)
 
     # Relationships
     message = db.relationship("Message", backref=db.backref("group_statuses", cascade="all, delete-orphan"))

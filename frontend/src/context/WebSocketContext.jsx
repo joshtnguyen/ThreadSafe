@@ -35,6 +35,7 @@ export function WebSocketProvider({ children }) {
   const groupKeyRotatedHandlersRef = useRef([]);
   const groupMessageDeletedHandlersRef = useRef([]);
   const groupMessageSavedHandlersRef = useRef([]);
+  const groupUpdatedHandlersRef = useRef([]);
 
   useEffect(() => {
     // Only connect if user is logged in
@@ -212,6 +213,11 @@ export function WebSocketProvider({ children }) {
     newSocket.on("group_message_saved_event", (data) => {
       console.log("Group message saved event received:", data);
       groupMessageSavedHandlersRef.current.forEach((handler) => handler(data));
+    });
+
+    newSocket.on("group_updated_event", (data) => {
+      console.log("Group updated event received:", data);
+      groupUpdatedHandlersRef.current.forEach((handler) => handler(data));
     });
 
     setSocket(newSocket);
@@ -395,6 +401,13 @@ export function WebSocketProvider({ children }) {
     };
   };
 
+  const onGroupUpdated = (handler) => {
+    groupUpdatedHandlersRef.current = [...groupUpdatedHandlersRef.current, handler];
+    return () => {
+      groupUpdatedHandlersRef.current = groupUpdatedHandlersRef.current.filter((h) => h !== handler);
+    };
+  };
+
   const value = {
     socket,
     isConnected,
@@ -423,6 +436,7 @@ export function WebSocketProvider({ children }) {
     onGroupKeyRotated,
     onGroupMessageDeleted,
     onGroupMessageSaved,
+    onGroupUpdated,
   };
 
   return (

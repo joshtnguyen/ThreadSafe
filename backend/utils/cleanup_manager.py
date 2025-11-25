@@ -72,10 +72,15 @@ def cleanup_expired_messages() -> dict:
             both_read_time = max(message.read_by_sender_at, message.read_by_receiver_at)
 
             # Use sender's retention to drive deletion for both sides
-            sender_start_time = both_read_time
-            if sender.settings_updated_at and sender.settings_updated_at > both_read_time:
-                sender_start_time = sender.settings_updated_at
-                print(f"    Sender changed settings at {sender.settings_updated_at}, using as start time")
+            # If timer_reset_at is set (message was unsaved), use that as the start time
+            if message.timer_reset_at:
+                sender_start_time = message.timer_reset_at
+                print(f"    Timer was reset at {message.timer_reset_at}, using as start time")
+            else:
+                sender_start_time = both_read_time
+                if sender.settings_updated_at and sender.settings_updated_at > both_read_time:
+                    sender_start_time = sender.settings_updated_at
+                    print(f"    Sender changed settings at {sender.settings_updated_at}, using as start time")
 
             sender_deletion_time = sender_start_time + timedelta(hours=sender_retention_hours)
             time_until_sender_delete = (sender_deletion_time - now).total_seconds()
@@ -142,11 +147,11 @@ def cleanup_expired_messages() -> dict:
 
 def cleanup_expired_group_messages() -> dict:
     """
-    Delete expired group messages based on owner-driven deletion logic.
+    Delete expired group messages based on sender-driven deletion logic.
 
     Group Message Deletion Rules:
     1. If ANY member saves the message → Never delete
-    2. All members read → Use owner's retention from when all read
+    2. All members read → Use sender's retention from when all read
     3. Not all read → Mark deleted at (sent_time + 24 hours)
     4. Actually delete when all members have deleted_for_user=True
 
@@ -210,21 +215,28 @@ def cleanup_expired_group_messages() -> dict:
             messages_modified += 1
             continue
 
-        # Get owner for retention settings
-        owner_member = next((m for m in members if m.role == "Owner"), None)
-        owner = User.query.get(owner_member.userID) if owner_member else None
-        owner_retention_hours = 24  # Default
-        if owner and owner.settings:
-            owner_retention_hours = owner.settings.get('messageRetentionHours', 24)
+        # Get sender for retention settings (sender-driven deletion)
+        sender = User.query.get(message.senderID)
+        sender_retention_hours = 24  # Default
+        if sender and sender.settings:
+            sender_retention_hours = sender.settings.get('messageRetentionHours', 24)
 
         # Check if all members have read the message
         all_read = all(s.read_at is not None for s in statuses.values())
 
         if all_read:
-            # Use owner's retention from when all read
-            latest_read = max(s.read_at for s in statuses.values())
-            deletion_time = latest_read + timedelta(hours=owner_retention_hours)
-            print(f"  Group message {message.msgID}: All read, owner retention={owner_retention_hours}h, deletes at {deletion_time}")
+            # Use sender's retention from when all read
+            # For each member, use timer_reset_at if set (message was unsaved), otherwise use read_at
+            effective_read_times = []
+            for status in statuses.values():
+                if status.timer_reset_at:
+                    effective_read_times.append(status.timer_reset_at)
+                else:
+                    effective_read_times.append(status.read_at)
+
+            latest_read = max(effective_read_times)
+            deletion_time = latest_read + timedelta(hours=sender_retention_hours)
+            print(f"  Group message {message.msgID}: All read, sender retention={sender_retention_hours}h, deletes at {deletion_time}")
 
             if now >= deletion_time:
                 # Soft delete for all members
