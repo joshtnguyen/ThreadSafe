@@ -66,10 +66,29 @@ Activate the virtual environment:
 pip install -r requirements.txt
 ```
 
-**Note:** If upgrading an existing database, run this migration script to add new encryption columns:
+**Note:** If upgrading an existing database, run these migration scripts:
 ```bash
+# Add encryption columns for hybrid encryption
 python scripts/upgrade_message_schema.py
+
+# Add timer_reset_at columns for message deletion timer reset feature
+python scripts/add_timer_reset_columns.py
 ```
+
+**Alternative:** If you want to start fresh (lose all test data):
+```bash
+# Delete the database
+rm instance/app.db
+
+# Restart the backend - it will create a fresh database with all columns
+python run.py
+```
+
+Then clear browser localStorage:
+- **Chrome (Mac)**: `Command + Option + I` (or `Command + Option + J` for Console)
+- **Chrome (Windows)**: `F12` (or `Ctrl + Shift + I`)
+- Type `localStorage.clear()` in the Console tab and press Enter
+- Or manually: DevTools → Application tab → Local Storage → Right-click → Clear
 
 ### Step 4: Install Frontend Dependencies
 ```bash
