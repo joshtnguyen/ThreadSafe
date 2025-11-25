@@ -125,7 +125,7 @@ export default function RegisterPage() {
               name="displayName"
               value={form.displayName}
               onChange={handleChange}
-              placeholder="Your Full Name"
+              placeholder="Your Display Name"
               autoComplete="name"
             />
           </label>

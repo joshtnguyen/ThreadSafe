@@ -8,6 +8,7 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from ..database import db
 from ..models import Message, User, GroupMessageStatus, GroupChat, GroupMember
+from ..websocket_helper import emit_message_saved, emit_group_message_saved
 
 backups_bp = Blueprint("backups", __name__)
 
@@ -128,33 +129,29 @@ def delete_backup(message_id: int):
         if not status or not status.saved_by_user:
             return jsonify({"message": "Message is not in your backups."}), 400
 
-        # Un-save for current user only
-        status.saved_by_user = False
-
-        # Check if anyone else still has it saved
-        other_saves = GroupMessageStatus.query.filter(
-            GroupMessageStatus.msgID == message_id,
-            GroupMessageStatus.userID != current_user_id,
-            GroupMessageStatus.saved_by_user == True
-        ).count()
-
-        # If no one has it saved, reset the expiry timer
-        if other_saves == 0:
-            # Use group default (24 hours) or get max from group members
-            max_hours = 24  # Group default
-            members = GroupMember.query.filter_by(groupChatID=message.groupChatID).all()
-            for member in members:
-                user = User.query.get(member.userID)
-                if user:
-                    hours = _get_user_retention_hours(user)
-                    max_hours = max(max_hours, hours)
-
-            message.expiryTime = datetime.utcnow() + timedelta(hours=max_hours)
+        # Un-save for ALL group members (symmetric behavior like 1-1 messages)
+        # Get all statuses for this message
+        all_statuses = GroupMessageStatus.query.filter_by(msgID=message_id).all()
+        for member_status in all_statuses:
+            member_status.saved_by_user = False
+            # Set timer_reset_at to trigger sender-driven deletion timer restart
+            member_status.timer_reset_at = datetime.utcnow()
 
         db.session.commit()
 
+        # Emit WebSocket event to notify all group members about the unstar
+        group = GroupChat.query.get(message.groupChatID)
+        if group:
+            for member in group.members:
+                emit_group_message_saved(member.userID, {
+                    "groupChatID": message.groupChatID,
+                    "messageId": message_id,
+                    "saved": False,
+                    "savedBy": current_user_id,
+                })
+
         return jsonify({
-            "message": "Message removed from your backups.",
+            "message": "Message removed from backups for all members.",
             "messageId": message_id,
         }), 200
 
@@ -168,28 +165,30 @@ def delete_backup(message_id: int):
     if not is_saved:
         return jsonify({"message": "Message is not in your backups."}), 400
 
-    # Get both users to check their retention settings
-    sender = User.query.get(message.senderID)
-    receiver = User.query.get(message.receiverID)
-
-    # Use the max of both users' retention hours
-    sender_hours = _get_user_retention_hours(sender)
-    receiver_hours = _get_user_retention_hours(receiver)
-    max_hours = max(sender_hours, receiver_hours)
-
-    # Un-star for both users
+    # Un-star for both users (symmetric behavior)
     message.saved_by_sender = False
     message.saved_by_receiver = False
 
-    # Reset expiry time based on max retention setting
-    message.expiryTime = datetime.utcnow() + timedelta(hours=max_hours)
+    # Set timer_reset_at to trigger sender-driven deletion timer restart
+    # The scheduler will use this timestamp to calculate expiry based on sender's retention setting
+    message.timer_reset_at = datetime.utcnow()
 
     db.session.commit()
+
+    # Emit WebSocket events to notify both users about the unstar
+    is_sender = message.senderID == current_user_id
+    other_user_id = message.receiverID if is_sender else message.senderID
+    other_conversation_id = current_user_id  # For the other participant, the conversation is with the current user
+
+    # Determine conversation_id for current user (it's the other user's ID)
+    conversation_id = other_user_id
+
+    emit_message_saved(other_user_id, message.msgID, other_conversation_id, False)
+    emit_message_saved(current_user_id, message.msgID, conversation_id, False)
 
     return jsonify({
         "message": "Message removed from backups. It will auto-delete based on retention settings.",
         "messageId": message_id,
-        "expiresIn": f"{max_hours} hours",
     }), 200
 
 

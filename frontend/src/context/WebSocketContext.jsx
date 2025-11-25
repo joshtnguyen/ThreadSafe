@@ -6,6 +6,36 @@ const WebSocketContext = createContext(null);
 
 const RELAY_SERVER_URL = "http://localhost:5001";
 
+// Helper function to redact sensitive information from logs
+const redactSensitiveData = (obj) => {
+  if (!obj) return obj;
+
+  const redacted = { ...obj };
+
+  // Redact user info in sender/receiver objects
+  if (redacted.sender) {
+    redacted.sender = {
+      ...redacted.sender,
+      username: redacted.sender.username ? "xxxxx" : undefined,
+      email: redacted.sender.email ? "xxxxx@xxxxx.xxx" : undefined,
+      displayName: redacted.sender.displayName ? "xxxxx" : undefined,
+      profilePicUrl: redacted.sender.profilePicUrl ? "[REDACTED]" : undefined,
+    };
+  }
+
+  if (redacted.receiver) {
+    redacted.receiver = {
+      ...redacted.receiver,
+      username: redacted.receiver.username ? "xxxxx" : undefined,
+      email: redacted.receiver.email ? "xxxxx@xxxxx.xxx" : undefined,
+      displayName: redacted.receiver.displayName ? "xxxxx" : undefined,
+      profilePicUrl: redacted.receiver.profilePicUrl ? "[REDACTED]" : undefined,
+    };
+  }
+
+  return redacted;
+};
+
 export function WebSocketProvider({ children }) {
   const { user } = useAuth();
   const [socket, setSocket] = useState(null);
@@ -71,7 +101,7 @@ export function WebSocketProvider({ children }) {
 
     // Listen for incoming messages
     newSocket.on("message_received", (data) => {
-      console.log("📨 New message received:", data.message);
+      console.log("📨 New message received:", redactSensitiveData(data.message));
       messageHandlersRef.current.forEach((handler) => handler(data.message));
     });
 
@@ -166,7 +196,10 @@ export function WebSocketProvider({ children }) {
     });
 
     newSocket.on("group_message_received", (data) => {
-      console.log("Group message received:", data);
+      console.log("Group message received:", {
+        ...data,
+        message: data.message ? redactSensitiveData(data.message) : data.message
+      });
       groupMessageHandlersRef.current.forEach((handler) => handler(data));
     });
 

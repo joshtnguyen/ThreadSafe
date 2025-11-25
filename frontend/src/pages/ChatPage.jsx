@@ -84,6 +84,7 @@ export default function ChatPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [conversationMenuOpen, setConversationMenuOpen] = useState(null); // Track which conversation's menu is open
   const [conversationMenuPosition, setConversationMenuPosition] = useState({ x: 0, y: 0 });
+  const conversationMenuButtonRef = useRef(null); // Track the current open conversation menu button for repositioning
   const [messages, setMessages] = useState([]);
   const [messageDraft, setMessageDraft] = useState("");
   const [toast, setToast] = useState(null);
@@ -93,6 +94,7 @@ export default function ChatPage() {
   const [isOpeningChat, setIsOpeningChat] = useState(false);
   const [friendMenuOpen, setFriendMenuOpen] = useState(null);
   const [friendMenuPosition, setFriendMenuPosition] = useState({ x: 0, y: 0 });
+  const friendMenuButtonRef = useRef(null); // Track the current open friend menu button for repositioning
   const [privateKey, setPrivateKey] = useState(null);
   const [decryptedMessages, setDecryptedMessages] = useState({});
   const [isFriendDropdownOpen, setIsFriendDropdownOpen] = useState(false);
@@ -137,6 +139,7 @@ export default function ChatPage() {
   const selectedGroupIdRef = useRef(null); // Ref for synchronous access in WebSocket handlers
   const [groupMenuOpen, setGroupMenuOpen] = useState(null); // Track which group's menu is open
   const [groupMenuPosition, setGroupMenuPosition] = useState({ x: 0, y: 0 });
+  const groupMenuButtonRef = useRef(null); // Track the current open group menu button for repositioning
   const [hoveredGroupMembers, setHoveredGroupMembers] = useState(null); // Track which group's member tooltip is shown
   const [memberTooltipPosition, setMemberTooltipPosition] = useState({ x: 0, y: 0 });
   const [isEditGroupPicModalOpen, setIsEditGroupPicModalOpen] = useState(false);
@@ -555,6 +558,67 @@ export default function ChatPage() {
     return () => document.removeEventListener("click", handleDocumentClick);
   }, [friendMenuOpen, conversationMenuOpen, groupMenuOpen, isFriendDropdownOpen]);
 
+  // Handle window resize to reposition dropdown menus
+  useEffect(() => {
+    const handleResize = () => {
+      const dropdownWidth = 170; // minWidth of the dropdown menu
+
+      // Update friend menu position if it's open
+      if (friendMenuOpen !== null && friendMenuButtonRef.current) {
+        const rect = friendMenuButtonRef.current.getBoundingClientRect();
+        const isStackedView = window.innerWidth < 900; // Stacked layout breakpoint
+
+        // In stacked view, always position on the left side of the button
+        // In normal view, always position on the right side
+        const x = isStackedView
+          ? rect.left - dropdownWidth - 12
+          : rect.right + 12;
+
+        setFriendMenuPosition({
+          x: Math.max(12, Math.min(x, window.innerWidth - dropdownWidth - 12)),
+          y: rect.top + rect.height / 2,
+        });
+      }
+
+      // Update conversation menu position if it's open
+      if (conversationMenuOpen !== null && conversationMenuButtonRef.current) {
+        const rect = conversationMenuButtonRef.current.getBoundingClientRect();
+        const isStackedView = window.innerWidth < 900; // Stacked layout breakpoint
+
+        // In stacked view, always position on the left side of the button
+        // In normal view, always position on the right side
+        const x = isStackedView
+          ? rect.left - dropdownWidth - 12
+          : rect.right + 12;
+
+        setConversationMenuPosition({
+          x: Math.max(12, Math.min(x, window.innerWidth - dropdownWidth - 12)),
+          y: rect.top + rect.height / 2,
+        });
+      }
+
+      // Update group menu position if it's open
+      if (groupMenuOpen !== null && groupMenuButtonRef.current) {
+        const rect = groupMenuButtonRef.current.getBoundingClientRect();
+        const isStackedView = window.innerWidth < 900; // Stacked layout breakpoint
+
+        // In stacked view, always position on the left side of the button
+        // In normal view, always position on the right side
+        const x = isStackedView
+          ? rect.left - dropdownWidth - 12
+          : rect.right + 12;
+
+        setGroupMenuPosition({
+          x: Math.max(12, Math.min(x, window.innerWidth - dropdownWidth - 12)),
+          y: rect.top + rect.height / 2,
+        });
+      }
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [friendMenuOpen, conversationMenuOpen, groupMenuOpen]);
+
   // Listen for real-time incoming messages
   useEffect(() => {
     const unsubscribe = onMessageReceived(async (message) => {
@@ -870,6 +934,11 @@ export default function ChatPage() {
           };
         })
       );
+
+      // If message is unsaved, remove it from the backups list
+      if (!saved) {
+        setBackups((prev) => prev.filter((b) => b.id !== messageId));
+      }
     });
     return unsubscribe;
   }, [onMessageSaved]);
@@ -1193,6 +1262,11 @@ export default function ChatPage() {
           prev.map((m) => (m.id === messageId ? { ...m, saved } : m))
         );
       }
+
+      // If message is unsaved, remove it from the backups list
+      if (!saved) {
+        setBackups((prev) => prev.filter((b) => b.id !== messageId));
+      }
     });
     return unsubscribe;
   }, [onGroupMessageSaved]);
@@ -1319,11 +1393,12 @@ export default function ChatPage() {
         return { ...previous, user: blocker, relationshipStatus: "blocked_by" };
       });
       setFriends((prev) => prev.filter((friend) => friend.id !== blocker.id));
+      // Remove the conversation with the blocker from the conversations list
+      setConversations((prev) => prev.filter((conv) => conv.id !== blocker.id));
       if (selectedId === blocker.id) {
         setSelectedId(null);
         setMessages([]);
       }
-      setToast({ message: `${blocker.username} has blocked you.`, tone: "info" });
     });
 
     const unsubscribeUnblocked = onUserUnblocked((unblocker) => {
@@ -1331,14 +1406,9 @@ export default function ChatPage() {
         if (!previous || previous.user.id !== unblocker.id) {
           return previous;
         }
-        return { ...previous, user: unblocker, relationshipStatus: "friends" };
+        return { ...previous, user: unblocker, relationshipStatus: "none" };
       });
-      setFriends((prev) => {
-        const exists = prev.some((entry) => entry.id === unblocker.id);
-        if (exists) return prev;
-        return [...prev, unblocker].sort((a, b) => a.username.localeCompare(b.username));
-      });
-      setToast({ message: `${unblocker.username} unblocked you.`, tone: "success" });
+      // Do NOT restore friendship - users must re-add each other
     });
 
     return () => {
@@ -1818,6 +1888,8 @@ export default function ChatPage() {
       const response = await api.blockUser(token, target);
       const blockedUser = response.user;
       setFriends((previous) => previous.filter((friend) => friend.username !== target));
+      // Remove the conversation with the blocked user from the conversations list
+      setConversations((prev) => prev.filter((conv) => conv.id !== blockedUser.id));
       setFriendRequests((prev) => ({
         incoming: prev.incoming.filter((req) => req.user.username !== target),
         outgoing: prev.outgoing.filter((req) => req.user.username !== target),
@@ -1837,7 +1909,7 @@ export default function ChatPage() {
         setSelectedId(null);
         setMessages([]);
       }
-      setToast({ message: `✓ Blocked ${target}.`, tone: "info" });
+      setToast({ message: `✓ Blocked ${target}. All messages and conversation deleted.`, tone: "info" });
     } catch (error) {
       setToast({ message: error.message, tone: "error" });
     } finally {
@@ -1855,25 +1927,17 @@ export default function ChatPage() {
     try {
       const response = await api.unblockUser(token, target);
       const unblockedUser = response.user;
-      const wasFriend = response.wasFriend;
       // Remove from blocked list
       setBlockedUsers((prev) => prev.filter((entry) => entry.username !== target));
-      // Only add back to friends list if they were friends before blocking
-      if (wasFriend) {
-        setFriends((prev) => {
-          const exists = prev.some((entry) => entry.id === unblockedUser.id);
-          if (exists) return prev;
-          return [...prev, unblockedUser].sort((a, b) => a.username.localeCompare(b.username));
-        });
-      }
-      // Update search result based on whether they were friends
+      // Do NOT restore friendship - users must re-add each other
+      // Update search result to show "none" (not connected)
       setFriendSearchResult((previous) => {
         if (!previous || previous.user.username !== target) {
           return previous;
         }
-        return { ...previous, relationshipStatus: wasFriend ? "friends" : "none", user: unblockedUser };
+        return { ...previous, relationshipStatus: "none", user: unblockedUser };
       });
-      setToast({ message: `Unblocked ${target}.`, tone: "success" });
+      setToast({ message: `Unblocked ${target}. You can re-add them as a friend if you wish.`, tone: "success" });
     } catch (error) {
       setToast({ message: error.message, tone: "error" });
     } finally {
@@ -2309,10 +2373,20 @@ export default function ChatPage() {
   const handleGroupMenuClick = (e, groupId) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
+    const dropdownWidth = 170;
+    const isStackedView = window.innerWidth < 900; // Stacked layout breakpoint
+
+    // In stacked view, always position on the left side of the button
+    // In normal view, always position on the right side
+    const x = isStackedView
+      ? rect.left - dropdownWidth - 12
+      : rect.right + 12;
+
     setGroupMenuPosition({
-      x: rect.right + 12,
+      x: Math.max(12, Math.min(x, window.innerWidth - dropdownWidth - 12)),
       y: rect.top + rect.height / 2,
     });
+    groupMenuButtonRef.current = e.currentTarget; // Store button reference for repositioning on resize
     setGroupMenuOpen(groupMenuOpen === groupId ? null : groupId);
   };
 
@@ -3420,7 +3494,12 @@ export default function ChatPage() {
                             padding: "10px 12px",
                             cursor: "pointer",
                             borderRadius: "6px",
-                            background: isSelected ? "var(--accent-soft)" : "transparent",
+                            background: isSelected
+                              ? (theme === "dark" ? "rgba(76, 175, 80, 0.2)" : "var(--accent-soft)")
+                              : "transparent",
+                            border: isSelected
+                              ? (theme === "dark" ? "1px solid #4CAF50" : "1px solid transparent")
+                              : "1px solid transparent",
                           }}
                         >
                           <input
@@ -3473,13 +3552,15 @@ export default function ChatPage() {
                 onClick={handleAddMember}
                 disabled={addMemberForm.selectedFriends.length === 0}
                 style={{
-                  background: addMemberForm.selectedFriends.length > 0 ? "#000000" : "var(--accent)",
-                  color: "var(--button-primary-text)",
+                  background: addMemberForm.selectedFriends.length > 0
+                    ? (theme === "dark" ? "#4CAF50" : "#000000")
+                    : (theme === "dark" ? "#555" : "var(--accent)"),
+                  color: "white",
                   border: "none",
                   borderRadius: "8px",
                   padding: "10px 20px",
                   fontSize: "0.9rem",
-                  fontWeight: 500,
+                  fontWeight: 600,
                   cursor: addMemberForm.selectedFriends.length === 0 ? "not-allowed" : "pointer",
                   opacity: addMemberForm.selectedFriends.length === 0 ? 0.5 : 1,
                 }}
@@ -3554,8 +3635,12 @@ export default function ChatPage() {
                             padding: "10px 12px",
                             cursor: "pointer",
                             borderRadius: "6px",
-                            background: isSelected ? "#fff1f1" : "transparent",
-                            border: isSelected ? "1px solid #ffcccb" : "1px solid transparent",
+                            background: isSelected
+                              ? (theme === "dark" ? "rgba(244, 67, 54, 0.2)" : "#fff1f1")
+                              : "transparent",
+                            border: isSelected
+                              ? (theme === "dark" ? "1px solid #f44336" : "1px solid #ffcccb")
+                              : "1px solid transparent",
                           }}
                         >
                           <input
@@ -3839,10 +3924,20 @@ export default function ChatPage() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 const rect = e.currentTarget.getBoundingClientRect();
+                                const dropdownWidth = 170;
+                                const isStackedView = window.innerWidth < 900; // Stacked layout breakpoint
+
+                                // In stacked view, always position on the left side of the button
+                                // In normal view, always position on the right side
+                                const x = isStackedView
+                                  ? rect.left - dropdownWidth - 12
+                                  : rect.right + 12;
+
                                 setFriendMenuPosition({
-                                  x: rect.right + 12,
+                                  x: Math.max(12, Math.min(x, window.innerWidth - dropdownWidth - 12)),
                                   y: rect.top + rect.height / 2,
                                 });
+                                friendMenuButtonRef.current = e.currentTarget; // Store button reference for repositioning on resize
                                 setFriendMenuOpen(friendMenuOpen === friend.id ? null : friend.id);
                               }}
                               style={{
@@ -4094,10 +4189,20 @@ export default function ChatPage() {
                         onClick={(e) => {
                           e.stopPropagation();
                           const rect = e.currentTarget.getBoundingClientRect();
+                          const dropdownWidth = 170;
+                          const isStackedView = window.innerWidth < 900; // Stacked layout breakpoint
+
+                          // In stacked view, always position on the left side of the button
+                          // In normal view, always position on the right side
+                          const x = isStackedView
+                            ? rect.left - dropdownWidth - 12
+                            : rect.right + 12;
+
                           setConversationMenuPosition({
-                            x: rect.right + 12,
+                            x: Math.max(12, Math.min(x, window.innerWidth - dropdownWidth - 12)),
                             y: rect.top + rect.height / 2,
                           });
+                          conversationMenuButtonRef.current = e.currentTarget; // Store button reference for repositioning on resize
                           setConversationMenuOpen(conversationMenuOpen === conversation.id ? null : conversation.id);
                         }}
                         style={{

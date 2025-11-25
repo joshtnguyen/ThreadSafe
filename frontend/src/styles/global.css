@@ -934,8 +934,14 @@ input {
   font-weight: 600;
 }
 
-.ghost-button.inline.danger {
+/* Dark mode - light pink for visibility */
+:root[data-theme="dark"] .ghost-button.inline.danger {
   color: #ff9898;
+}
+
+/* Light mode - darker red for better contrast */
+:root[data-theme="light"] .ghost-button.inline.danger {
+  color: #c62828;
 }
 
 .sidebar-logout {

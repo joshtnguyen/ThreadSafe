@@ -69,6 +69,22 @@ def list_conversations():
         if not contact_user:
             continue
 
+        # Skip conversations with blocked users
+        # Check if current user blocked the contact
+        blocked_by_me = Contact.query.filter_by(
+            userID=current_user_id,
+            contact_userID=contact_id,
+            contactStatus="Blocked"
+        ).first()
+        # Check if contact blocked current user
+        blocked_me = Contact.query.filter_by(
+            userID=contact_id,
+            contact_userID=current_user_id,
+            contactStatus="Blocked"
+        ).first()
+        if blocked_by_me or blocked_me:
+            continue
+
         # Get last non-expired, non-deleted message between these two users
         last_message = (
             Message.query.filter(
@@ -233,6 +249,7 @@ def delete_conversation(conversation_id: int):
     Delete a conversation by deleting all messages between current user and the other user.
 
     This permanently removes all messages (both sent and received) in the conversation.
+    Before deletion, unstars any saved messages and notifies both users to remove them from backups.
     conversation_id is the other user's ID.
     """
     current_user_id = _current_user_id()
@@ -249,6 +266,22 @@ def delete_conversation(conversation_id: int):
             and_(Message.senderID == conversation_id, Message.receiverID == current_user_id),
         )
     ).all()
+
+    # Before deleting, unstar any saved messages and notify both users
+    for message in messages:
+        # Check if message is starred by either user
+        if message.saved_by_sender or message.saved_by_receiver:
+            # Unstar for both users (symmetric behavior)
+            message.saved_by_sender = False
+            message.saved_by_receiver = False
+
+            # Emit WebSocket events to notify both users
+            # This will unstar the message in chat and remove it from their backup folders
+            emit_message_saved(current_user_id, message.msgID, conversation_id, False)
+            emit_message_saved(conversation_id, message.msgID, current_user_id, False)
+
+    # Commit the unstar changes
+    db.session.commit()
 
     # Delete all messages
     for message in messages:

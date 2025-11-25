@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
+from sqlalchemy import and_, or_
 
 from ..database import db
-from ..models import Contact, User
+from ..models import Contact, Message, User
 from ..websocket_helper import (
     emit_friend_request,
     emit_friend_request_accepted,
@@ -275,8 +276,29 @@ def block_user():
     if target_user.userID == current_user_id:
         return jsonify({"message": "You cannot block yourself."}), 400
 
-    # Only set the blocker's side to "Blocked"
-    # The blocked user's contact remains unchanged so they still see the blocker in their friend list
+    # Delete all 1-1 messages between the two users (including saved ones)
+    # This deletes messages in both directions (current_user -> target and target -> current_user)
+    deleted_message_count = Message.query.filter(
+        Message.groupChatID.is_(None),  # Only 1-1 messages, not group messages
+        or_(
+            and_(Message.senderID == current_user_id, Message.receiverID == target_user.userID),
+            and_(Message.senderID == target_user.userID, Message.receiverID == current_user_id)
+        )
+    ).delete(synchronize_session=False)
+
+    print(f"Deleted {deleted_message_count} messages between users {current_user_id} and {target_user.userID}")
+
+    # Remove friendship from both sides
+    # Find incoming contact (target -> current_user)
+    incoming = Contact.query.filter_by(
+        userID=target_user.userID,
+        contact_userID=current_user_id
+    ).first()
+    if incoming:
+        db.session.delete(incoming)
+        print(f"Removed incoming friendship from {target_user.userID} to {current_user_id}")
+
+    # Set blocker's side to "Blocked" (or create if doesn't exist)
     outgoing = Contact.query.filter_by(
         userID=current_user_id,
         contact_userID=target_user.userID
@@ -288,16 +310,19 @@ def block_user():
         )
         db.session.add(outgoing)
     outgoing.contactStatus = "Blocked"
+    print(f"Set outgoing contact status to Blocked for {current_user_id} -> {target_user.userID}")
 
     db.session.commit()
 
     blocker = User.query.get(current_user_id)
     if blocker:
+        # Notify target user they were blocked (this also implies friendship removal)
         emit_user_blocked(target_user.userID, blocker.to_dict())
 
     return jsonify({
-        "message": f"Blocked {target_user.username}.",
+        "message": f"Blocked {target_user.username}. All messages deleted and friendship removed.",
         "user": target_user.to_dict(),
+        "deletedMessages": deleted_message_count,
     }), 200
 
 
@@ -318,8 +343,6 @@ def unblock_user():
     if target_user.userID == current_user_id:
         return jsonify({"message": "You cannot unblock yourself."}), 400
 
-    was_friend = False
-
     # Find the blocker's contact
     outgoing = Contact.query.filter_by(
         userID=current_user_id,
@@ -330,31 +353,10 @@ def unblock_user():
     if not outgoing:
         return jsonify({"message": "User is not blocked."}), 404
 
-    incoming = Contact.query.filter_by(
-        userID=target_user.userID,
-        contact_userID=current_user_id,
-    ).first()
-
-    if incoming and incoming.contactStatus == "Accepted":
-        was_friend = True
-
-    if was_friend:
-        # Restore friendship - set status back to Accepted
-        outgoing.contactStatus = "Accepted"
-        if incoming:
-            incoming.contactStatus = "Accepted"
-        else:
-            reverse = Contact(
-                userID=target_user.userID,
-                contact_userID=current_user_id,
-                contactStatus="Accepted",
-            )
-            db.session.add(reverse)
-    else:
-        # They weren't friends before - just delete the block
-        db.session.delete(outgoing)
-        if incoming and incoming.contactStatus == "Blocked":
-            db.session.delete(incoming)
+    # Simply remove the block status
+    # Since blocking now deletes the friendship, unblocking should NOT restore it
+    # Users can re-add each other as friends if they want
+    db.session.delete(outgoing)
 
     db.session.commit()
 
@@ -363,9 +365,8 @@ def unblock_user():
         emit_user_unblocked(target_user.userID, unblocker.to_dict())
 
     return jsonify({
-        "message": f"Unblocked {target_user.username}.",
+        "message": f"Unblocked {target_user.username}. You can re-add them as a friend if you wish.",
         "user": target_user.to_dict(),
-        "wasFriend": was_friend,
     }), 200
 
 

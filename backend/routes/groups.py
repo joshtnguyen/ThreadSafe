@@ -296,7 +296,11 @@ def update_group(group_id: int):
 @groups_bp.delete("/<int:group_id>")
 @jwt_required()
 def delete_group(group_id: int):
-    """Delete a group (Owner only). Deletes for all members."""
+    """
+    Delete a group (Owner only). Deletes for all members.
+
+    Before deletion, unstars any saved messages and notifies all members to remove them from backups.
+    """
     current_user_id = _current_user_id()
 
     group = GroupChat.query.get(group_id)
@@ -309,10 +313,37 @@ def delete_group(group_id: int):
     # Get all member IDs before deleting
     member_ids = [m.userID for m in group.members]
 
-    # Get all message IDs in this group
-    message_ids = [m.msgID for m in Message.query.filter_by(groupChatID=group_id).all()]
+    # Get all messages in this group
+    messages = Message.query.filter_by(groupChatID=group_id).all()
+    message_ids = [m.msgID for m in messages]
 
-    # Delete GroupMessageStatus records first (to avoid FK constraint)
+    # Before deleting, unstar any saved messages and notify all members
+    if message_ids:
+        # Get all saved message statuses
+        saved_statuses = GroupMessageStatus.query.filter(
+            GroupMessageStatus.msgID.in_(message_ids),
+            GroupMessageStatus.saved_by_user == True
+        ).all()
+
+        # Unstar all saved messages
+        for status in saved_statuses:
+            status.saved_by_user = False
+
+        db.session.commit()
+
+        # Emit WebSocket events to all members for each saved message that was unstarred
+        # This will unstar the message in chat and remove it from their backup folders
+        saved_message_ids = set(s.msgID for s in saved_statuses)
+        for message_id in saved_message_ids:
+            for member_id in member_ids:
+                emit_group_message_saved(member_id, {
+                    "groupChatID": group_id,
+                    "messageId": message_id,
+                    "saved": False,
+                    "savedBy": current_user_id,  # Owner initiated the deletion
+                })
+
+    # Delete GroupMessageStatus records (to avoid FK constraint)
     if message_ids:
         GroupMessageStatus.query.filter(GroupMessageStatus.msgID.in_(message_ids)).delete(synchronize_session=False)
 
@@ -320,7 +351,7 @@ def delete_group(group_id: int):
     db.session.delete(group)
     db.session.commit()
 
-    # Notify all members
+    # Notify all members about group deletion
     for member_id in member_ids:
         if member_id != current_user_id:
             emit_group_deleted(member_id, {"groupChatID": group_id})
@@ -420,6 +451,8 @@ def remove_member(group_id: int, member_id: int):
     Remove a member from a group.
     - Owner can remove anyone
     - Members can only remove themselves (leave)
+
+    Before removal, unstars any saved messages for that member and notifies them to remove from backups.
     """
     current_user_id = _current_user_id()
 
@@ -453,6 +486,42 @@ def remove_member(group_id: int, member_id: int):
 
     if not membership:
         return jsonify({"message": "Member not found."}), 404
+
+    # Get all message IDs for this group
+    group_message_ids = [m.msgID for m in Message.query.filter_by(groupChatID=group_id).all()]
+
+    # Before deleting, unstar any saved messages and notify the member
+    if group_message_ids:
+        # Get all saved message statuses for this member
+        saved_statuses = GroupMessageStatus.query.filter(
+            GroupMessageStatus.msgID.in_(group_message_ids),
+            GroupMessageStatus.userID == member_id,
+            GroupMessageStatus.saved_by_user == True
+        ).all()
+
+        # Unstar all saved messages for this member
+        for status in saved_statuses:
+            status.saved_by_user = False
+
+        db.session.commit()
+
+        # Emit WebSocket events to the member for each saved message that was unstarred
+        # This will unstar the message in chat and remove it from their backup folder
+        saved_message_ids = [s.msgID for s in saved_statuses]
+        for message_id in saved_message_ids:
+            emit_group_message_saved(member_id, {
+                "groupChatID": group_id,
+                "messageId": message_id,
+                "saved": False,
+                "savedBy": current_user_id,  # Who initiated the removal
+            })
+
+    # Delete all GroupMessageStatus records for this member in this group
+    if group_message_ids:
+        GroupMessageStatus.query.filter(
+            GroupMessageStatus.msgID.in_(group_message_ids),
+            GroupMessageStatus.userID == member_id
+        ).delete(synchronize_session=False)
 
     db.session.delete(membership)
     db.session.commit()
