@@ -34,7 +34,10 @@ def _verify_api_request():
     token = request.headers.get("X-Relay-Token")
     if token != API_TOKEN:
         abort(401)
-    if request.remote_addr not in {"127.0.0.1", "::1"}:
+    # Allow requests from localhost OR Docker internal network (172.x.x.x, 10.x.x.x)
+    # Since we have token auth, Docker network requests are safe
+    if not (request.remote_addr in {"127.0.0.1", "::1"} or
+            request.remote_addr.startswith(("172.", "10."))):
         abort(403)
 
 

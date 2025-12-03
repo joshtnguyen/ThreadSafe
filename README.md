@@ -3,12 +3,11 @@
 **ThreadSafe: A Secure E2EE Web Messaging Application**  
 
 ## Overview:
-A secure, scalable messaging platform implementing true end-to-end encryption (E2EE) for plaintext and image messaging, both 1-to-1 and group chat conversations. Group chats have role status permission control and settings based around profile editing and notifications. Messages also have receipt status, and contacts management with adding, removing, and editing other friend users. Built with Flask backend and modern web frontend, this application ensures message privacy through advanced cryptographic protocols that include Elliptic Curve Cryptography (ECC), AES-256 symmetric encryption, and the Double Ratchet algorithm for perfect forward secrecy.
+A secure, scalable messaging platform implementing true end-to-end encryption (E2EE) for plaintext and image messaging, both 1-to-1 and group chat conversations. Group chats have role status permission control and settings based around profile editing and notifications. Messages also have receipt status, and contacts management with adding, removing, and editing other friend users. Built with Flask backend and modern web frontend, this application ensures message privacy through advanced cryptographic protocols that include Elliptic Curve Cryptography (ECC), AES-256 symmetric encryption.
 
 ## Key Features:
     
 - **Advanced Encryption:** Utilizes ECC for asymmetric keys and AES-256 symmetric encryption with HMAC verification
-- **Double Ratchet Protocol:** Provides perfect forward secrecy and break-in recovery for one-on-one chats
 - **Secure Group Messaging:** A dedicated key server generates ephemeral symmetric keys for group communications
 - **Message Persistence Controls:** Auto-deletion features (3 days for one-on-one chats, 24 hours for group chats) with client-side backup and restore options
 - **Read Receipts & Status Indicators:** Real-time tracking of message statuses (Sent/Delivered/Read)
@@ -24,16 +23,98 @@ A secure, scalable messaging platform implementing true end-to-end encryption (E
 - **Frontend Dev Server** (Vite, Port 5173): Development server with hot module replacement (production builds are served by main server)
 
 ## Quick Start (Docker - Recommended)
+
+### Prerequisites for Docker Setup
+- **Docker Desktop** installed and running
+  - Download from [https://www.docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop)
+  - Choose the correct version for your platform (Mac Intel, Mac Silicon, Windows, Linux)
+- Git (You can sign in with Git Account, etc)
+
+### Running with Docker
+
+If you want to run docker, it's an easy way to run the entire application with a single command. So all services (backend, relay server, scheduler, and frontend) will start automatically in isolated containers.
+
+**Step 1: Clone the Repository**
 ```bash
-# Clone and run with a single command (requires Docker Desktop)
 git clone git@github.com:joshtnguyen/CMPE-131-Term-Project.git
 cd CMPE-131-Term-Project
-docker-compose up
 ```
 
-##### Access at: [http://localhost:5000](http://localhost:5000)
+**Step 2: Start All Services**
+```bash
+docker compose up
+```
 
-## Installation & Setup
+The first time you run this, Docker will build the images (takes 2-3 minutes). Subsequent starts are much faster.
+
+**Step 3: Access the Application**
+- **Frontend**: [http://localhost:5173](http://localhost:5173) ← **Use this to access the app**
+- **Backend API**: [http://localhost:5000](http://localhost:5000)
+- **Relay Server Health**: [http://localhost:5001/health](http://localhost:5001/health)
+
+### Docker Management Commands
+
+**If you want to stop all services:**
+```bash
+docker compose down
+```
+
+**If you want to start services in background (detached mode):**
+```bash
+docker compose up -d
+```
+
+**To view logs:**
+```bash
+# All services
+docker compose logs -f
+
+# Specific service
+docker compose logs -f backend
+docker compose logs -f frontend
+docker compose logs -f relay
+docker compose logs -f scheduler
+```
+
+**To restart a specific service:**
+```bash
+docker compose restart frontend
+docker compose restart backend
+```
+
+**To rebuild containers after code changes:**
+```bash
+docker compose up --build
+```
+
+### For troubleshooting Docker Setup
+
+**For the Issue: If Port already in use**
+```bash
+# Stop any local servers running on ports 5000, 5001, or 5173
+lsof -ti:5000 | xargs kill -9  # Mac/Linux
+lsof -ti:5001 | xargs kill -9
+lsof -ti:5173 | xargs kill -9
+```
+
+**For the Issue: Changes not reflecting**
+- For backend/relay changes: `docker compose restart backend relay`
+- For frontend changes: Hot reload should work automatically
+- If still not working: `docker compose up --build`
+
+**For database-related issues:**
+```bash
+# Delete database and restart fresh
+docker compose down
+rm instance/app.db*
+docker compose up
+```
+
+---
+
+## Manual Installation & Setup (Without Docker)
+
+If you prefer to run services manually or Docker is not available, follow these instructions:
 
 ### Prerequisites
 - Python 3.8+
@@ -150,8 +231,8 @@ Command+click (Mac) or Ctrl+click (Windows) on the links to open them.
 
 ## Key Features Testing
 ### Encryption Protocol Validation
-- Verify Double Ratchet algorithm implementation for one-on-one messaging
-- Test perfect forward secrecy by simulating key compromises
+- Verify end-to-end encryption implementation for one-on-one messaging
+- Test encryption key management and secure key exchange
 - Validate group key generation and rotation on membership changes
 - Verify HMAC integrity protection against message tampering
 
@@ -193,10 +274,11 @@ Command+click (Mac) or Ctrl+click (Windows) on the links to open them.
 
 ### Team Member 4: Alvin Cheng (Frontend and Back-end Developer)
 - Created a comprehensive ER diagram and database schema
-- Implemented MySQL database with full relational integrity
+- Implemented SQLite database with full relational integrity
 - Developed backend logic using the Python Flask framework
 - Ensured domain constraints and referential integrity on foreign keys
 - Implemented an authentication system and session management
+- Built robust secure end to end messaging in real time for 1-1 and group chats
 
 ### Team Member 5: Malcom Dyer (Frontend and Back-end Developer)
 - Built a responsive user interface with modern HTML5/CSS3
@@ -204,6 +286,7 @@ Command+click (Mac) or Ctrl+click (Windows) on the links to open them.
 - Developed a real-time chat interface with WebSocket integration
 - Created settings and preferences management system
 - Implemented local backup/restore functionality
+- Built robust secure end to end messaging in real time for 1-1 and group chats
 
 ### Team Member 6: Minh Trinh (QA Test Engineer)
 - Developed comprehensive test plans for all security features

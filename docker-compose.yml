@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  # Main backend server
+  backend:
+    build: .
+    container_name: messaging-backend
+    command: python run.py
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app/backend
+      - ./instance:/app/instance
+      - ./run.py:/app/run.py
+    environment:
+      - FLASK_ENV=development
+      - FRONTEND_ORIGIN=http://localhost:5173
+      - RELAY_API_URL=http://relay:5001
+      - RELAY_API_TOKEN=dev-relay-token
+    depends_on:
+      - relay
+    networks:
+      - messaging-network
+
+  # WebSocket relay server
+  relay:
+    build: .
+    container_name: messaging-relay
+    command: python relay_server_TLS.py
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./backend:/app/backend
+      - ./relay_server_TLS.py:/app/relay_server_TLS.py
+    environment:
+      - FLASK_ENV=development
+      - RELAY_API_TOKEN=dev-relay-token
+    networks:
+      - messaging-network
+
+  # Message cleanup scheduler
+  scheduler:
+    build: .
+    container_name: messaging-scheduler
+    command: python scheduler.py
+    volumes:
+      - ./backend:/app/backend
+      - ./instance:/app/instance
+      - ./scheduler.py:/app/scheduler.py
+    environment:
+      - FLASK_ENV=development
+    depends_on:
+      - backend
+    networks:
+      - messaging-network
+
+  # Frontend dev server
+  frontend:
+    image: node:18-alpine
+    container_name: messaging-frontend
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:5000
+      - VITE_RELAY_URL=http://localhost:5001
+      - VITE_PROXY_TARGET=http://backend:5000
+    depends_on:
+      - backend
+      - relay
+    networks:
+      - messaging-network
+
+networks:
+  messaging-network:
+    driver: bridge
+
+volumes:
+  node_modules:
