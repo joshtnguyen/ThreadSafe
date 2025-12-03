@@ -49,8 +49,11 @@ services:
       - ./scheduler.py:/app/scheduler.py
     environment:
       - FLASK_ENV=development
+      - RELAY_API_URL=http://relay:5001
+      - RELAY_API_TOKEN=dev-relay-token
     depends_on:
       - backend
+      - relay
     networks:
       - messaging-network
 

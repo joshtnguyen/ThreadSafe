@@ -197,6 +197,15 @@ def cleanup_expired_group_messages() -> dict:
                 db.session.add(status)
             statuses[member_id] = status
 
+        # Flush immediately to avoid autoflush during next GroupMember query
+        # This prevents IntegrityError if status already exists
+        try:
+            db.session.flush()
+        except Exception as e:
+            print(f"  Warning: Failed to flush statuses for message {message.msgID}: {e}")
+            db.session.rollback()
+            continue
+
         # Check if any member has saved the message
         is_saved = any(s.saved_by_user for s in statuses.values())
         if is_saved:
