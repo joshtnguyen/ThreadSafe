@@ -570,6 +570,72 @@ class Backup(db.Model):
         }
 
 
+class LoginAttempt(db.Model):
+    """Track failed login attempts to prevent brute force attacks."""
+
+    __tablename__ = "login_attempt"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    username = db.Column(db.String(150), nullable=False, unique=True, index=True)
+    failed_attempts = db.Column(db.Integer, default=0, nullable=False)
+    lockout_until = db.Column(db.DateTime, nullable=True)
+    last_attempt = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "username": self.username,
+            "failedAttempts": self.failed_attempts,
+            "lockoutUntil": self.lockout_until.isoformat() if self.lockout_until else None,
+            "lastAttempt": self.last_attempt.isoformat() if self.last_attempt else None,
+        }
+
+
+class LoginAttemptByIP(db.Model):
+    """Track failed login attempts by IP address to prevent brute force attacks."""
+
+    __tablename__ = "login_attempt_by_ip"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    ip_address = db.Column(db.String(45), nullable=False, unique=True, index=True)  # IPv6 max length is 45
+    failed_attempts = db.Column(db.Integer, default=0, nullable=False)
+    lockout_until = db.Column(db.DateTime, nullable=True)
+    last_attempt = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "ipAddress": self.ip_address,
+            "failedAttempts": self.failed_attempts,
+            "lockoutUntil": self.lockout_until.isoformat() if self.lockout_until else None,
+            "lastAttempt": self.last_attempt.isoformat() if self.last_attempt else None,
+        }
+
+
+class MessageRateLimit(db.Model):
+    """Track message sending rate to prevent spam."""
+
+    __tablename__ = "message_rate_limit"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    userID = db.Column(db.Integer, db.ForeignKey("user.userID", ondelete="CASCADE"), nullable=False, index=True)
+    message_timestamps = db.Column(db.Text, nullable=False, default="[]")  # JSON array of timestamps
+    cooldown_until = db.Column(db.DateTime, nullable=True)
+    last_warning = db.Column(db.DateTime, nullable=True)
+
+    # Relationship
+    user = db.relationship("User", backref=db.backref("message_rate_limits", lazy=True))
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "userID": self.userID,
+            "messageTimestamps": self.message_timestamps,
+            "cooldownUntil": self.cooldown_until.isoformat() if self.cooldown_until else None,
+            "lastWarning": self.last_warning.isoformat() if self.last_warning else None,
+        }
+
+
 # ============================================================================
 # Export all models
 # ============================================================================
@@ -584,4 +650,7 @@ __all__ = [
     "Message",
     "GroupMessageStatus",
     "Backup",
+    "LoginAttempt",
+    "LoginAttemptByIP",
+    "MessageRateLimit",
 ]

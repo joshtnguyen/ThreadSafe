@@ -276,17 +276,8 @@ def block_user():
     if target_user.userID == current_user_id:
         return jsonify({"message": "You cannot block yourself."}), 400
 
-    # Delete all 1-1 messages between the two users (including saved ones)
-    # This deletes messages in both directions (current_user -> target and target -> current_user)
-    deleted_message_count = Message.query.filter(
-        Message.groupChatID.is_(None),  # Only 1-1 messages, not group messages
-        or_(
-            and_(Message.senderID == current_user_id, Message.receiverID == target_user.userID),
-            and_(Message.senderID == target_user.userID, Message.receiverID == current_user_id)
-        )
-    ).delete(synchronize_session=False)
-
-    print(f"Deleted {deleted_message_count} messages between users {current_user_id} and {target_user.userID}")
+    # Messages are preserved and will follow normal auto-delete timer logic
+    # No message deletion occurs when blocking
 
     # Remove friendship from both sides
     # Find incoming contact (target -> current_user)
@@ -320,9 +311,8 @@ def block_user():
         emit_user_blocked(target_user.userID, blocker.to_dict())
 
     return jsonify({
-        "message": f"Blocked {target_user.username}. All messages deleted and friendship removed.",
+        "message": f"Blocked {target_user.username}. Friendship removed.",
         "user": target_user.to_dict(),
-        "deletedMessages": deleted_message_count,
     }), 200
 
 

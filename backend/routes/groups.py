@@ -9,6 +9,7 @@ from sqlalchemy import or_, and_
 
 from ..database import db
 from ..models import GroupChat, GroupMember, Message, User, GroupMessageStatus, Contact
+from .conversations import check_message_rate_limit
 from ..websocket_helper import (
     emit_group_created,
     emit_group_message,
@@ -808,6 +809,11 @@ def send_group_message(group_id: int):
     """
     current_user_id = _current_user_id()
 
+    # Check message rate limit
+    allowed, error_response, warning = check_message_rate_limit(current_user_id)
+    if not allowed:
+        return jsonify(error_response), 429
+
     group = GroupChat.query.get(group_id)
     if not group:
         return jsonify({"message": "Group not found."}), 404
@@ -864,13 +870,17 @@ def send_group_message(group_id: int):
                 "message": message_data_for_others,
             })
 
-    # Return sender's version with isOwn=True
+    # Return sender's version with isOwn=True, including rate limit warning if present
     message_data_for_sender = message.to_dict(current_user_id)
     message_data_for_sender["readBy"] = []  # No one has read yet
-    return jsonify({
+    response_data = {
         "message": "Message sent successfully.",
         "data": message_data_for_sender,
-    }), 201
+    }
+    if warning:
+        response_data["warning"] = warning
+
+    return jsonify(response_data), 201
 
 
 @groups_bp.patch("/<int:group_id>/messages/<int:message_id>/read")

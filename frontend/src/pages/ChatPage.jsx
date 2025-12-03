@@ -82,6 +82,7 @@ export default function ChatPage() {
   const [friends, setFriends] = useState([]);
   const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
   const [selectedId, setSelectedId] = useState(null);
+  const [, forceUpdate] = useState(0); // Force update counter for layout fixes
   const [conversationMenuOpen, setConversationMenuOpen] = useState(null); // Track which conversation's menu is open
   const [conversationMenuPosition, setConversationMenuPosition] = useState({ x: 0, y: 0 });
   const conversationMenuButtonRef = useRef(null); // Track the current open conversation menu button for repositioning
@@ -1393,12 +1394,7 @@ export default function ChatPage() {
         return { ...previous, user: blocker, relationshipStatus: "blocked_by" };
       });
       setFriends((prev) => prev.filter((friend) => friend.id !== blocker.id));
-      // Remove the conversation with the blocker from the conversations list
-      setConversations((prev) => prev.filter((conv) => conv.id !== blocker.id));
-      if (selectedId === blocker.id) {
-        setSelectedId(null);
-        setMessages([]);
-      }
+      // Conversation and messages are preserved
     });
 
     const unsubscribeUnblocked = onUserUnblocked((unblocker) => {
@@ -1648,6 +1644,11 @@ export default function ChatPage() {
 
       const newMessage = response.message;
 
+      // Check for rate limit warning
+      if (response.warning) {
+        setToast({ message: response.warning, tone: "warning" });
+      }
+
       // Clear reply state after sending
       if (replyingTo) {
         setReplyingTo(null);
@@ -1693,6 +1694,13 @@ export default function ChatPage() {
       setSelectedId(conversation.id);
       setIsFriendDropdownOpen(false);
       setFriendMenuOpen(null);
+
+      // Force layout recalculation to ensure proper rendering
+      // Trigger both resize event and force update
+      setTimeout(() => {
+        window.dispatchEvent(new Event('resize'));
+        forceUpdate(n => n + 1); // Trigger re-render to fix layout
+      }, 10);
     } catch (error) {
       setToast({ message: error.message, tone: "error" });
     } finally {
@@ -1888,8 +1896,7 @@ export default function ChatPage() {
       const response = await api.blockUser(token, target);
       const blockedUser = response.user;
       setFriends((previous) => previous.filter((friend) => friend.username !== target));
-      // Remove the conversation with the blocked user from the conversations list
-      setConversations((prev) => prev.filter((conv) => conv.id !== blockedUser.id));
+      // Conversation is preserved when blocking
       setFriendRequests((prev) => ({
         incoming: prev.incoming.filter((req) => req.user.username !== target),
         outgoing: prev.outgoing.filter((req) => req.user.username !== target),
@@ -1905,11 +1912,8 @@ export default function ChatPage() {
         }
         return { ...previous, relationshipStatus: "blocked", user: blockedUser };
       });
-      if (blockedFriend && selectedId === blockedFriend.id) {
-        setSelectedId(null);
-        setMessages([]);
-      }
-      setToast({ message: `✓ Blocked ${target}. All messages and conversation deleted.`, tone: "info" });
+      // Conversation and messages are preserved
+      setToast({ message: `✓ Blocked ${target}.`, tone: "info" });
     } catch (error) {
       setToast({ message: error.message, tone: "error" });
     } finally {
@@ -2247,6 +2251,12 @@ export default function ChatPage() {
 
       // Add message to local list (backend returns message in "data" field)
       const newMessage = response.data;
+
+      // Check for rate limit warning
+      if (response.warning) {
+        setToast({ message: response.warning, tone: "warning" });
+      }
+
       setMessages((prev) => [...prev, newMessage]);
 
       // Store decrypted content

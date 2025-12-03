@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 from sqlalchemy import func
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from ..database import db
-from ..models import User, PublicKey
+from ..models import User, PublicKey, LoginAttempt, LoginAttemptByIP
 from ..encryption.ecc_handler import generate_key_pair, serialize_public_key
 
 auth_bp = Blueprint("auth", __name__)
+
+# Rate limiting configuration
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_DURATION_MINUTES = 1  # Change to 15-30 for production
+MAX_IP_LOGIN_ATTEMPTS = 20  # Maximum login attempts from a single IP
+IP_LOCKOUT_DURATION_MINUTES = 60  # Lock IP for 1 hour after exceeding limit
 
 
 def _normalise_username(username: str) -> str:
@@ -118,13 +126,137 @@ def login():
     if not identifier or not password:
         return jsonify({"message": "Username/email and password are required."}), 400
 
+    # Get client IP address (handle proxies)
+    if request.headers.getlist("X-Forwarded-For"):
+        client_ip = request.headers.getlist("X-Forwarded-For")[0]
+    else:
+        client_ip = request.remote_addr
+
+    # Check IP-based rate limiting FIRST (before username lookup)
+    ip_attempt_record = LoginAttemptByIP.query.filter_by(ip_address=client_ip).first()
+
+    if ip_attempt_record and ip_attempt_record.lockout_until:
+        if datetime.utcnow() < ip_attempt_record.lockout_until:
+            # IP is locked out
+            time_remaining = ip_attempt_record.lockout_until - datetime.utcnow()
+            seconds_remaining = int(time_remaining.total_seconds())
+            minutes_remaining = seconds_remaining // 60
+
+            if minutes_remaining > 0:
+                time_str = f"{minutes_remaining} minute{'s' if minutes_remaining != 1 else ''}"
+            else:
+                time_str = f"{seconds_remaining} second{'s' if seconds_remaining != 1 else ''}"
+
+            return jsonify({
+                "message": f"Too many login attempts from your IP address. Please wait {time_str} before trying again.",
+                "lockoutUntil": ip_attempt_record.lockout_until.isoformat(),
+                "secondsRemaining": seconds_remaining
+            }), 429
+        else:
+            # IP lockout expired - reset
+            ip_attempt_record.failed_attempts = 0
+            ip_attempt_record.lockout_until = None
+            db.session.commit()
+
     # Try to find user by exact username first (case-SENSITIVE), then by email (case-insensitive)
     user = User.query.filter_by(username=identifier).first()
     if not user:
         user = User.query.filter(func.lower(User.email) == identifier.lower()).first()
 
-    if not user or not check_password_hash(user.password, password):
+    # If user doesn't exist, track IP attempt but return generic error
+    if not user:
+        # Track IP-based attempt for non-existent users too
+        if not ip_attempt_record:
+            ip_attempt_record = LoginAttemptByIP(ip_address=client_ip, failed_attempts=0)
+            db.session.add(ip_attempt_record)
+
+        ip_attempt_record.failed_attempts += 1
+        ip_attempt_record.last_attempt = datetime.utcnow()
+
+        # Check if IP should be locked out
+        if ip_attempt_record.failed_attempts >= MAX_IP_LOGIN_ATTEMPTS:
+            ip_attempt_record.lockout_until = datetime.utcnow() + timedelta(minutes=IP_LOCKOUT_DURATION_MINUTES)
+
+        db.session.commit()
         return jsonify({"message": "Invalid credentials."}), 401
+
+    # User exists - now check rate limiting for this account
+    tracking_identifier = user.username
+
+    # Check for existing login attempt record
+    attempt_record = LoginAttempt.query.filter_by(username=tracking_identifier).first()
+
+    # Check if user is currently locked out
+    if attempt_record and attempt_record.lockout_until:
+        if datetime.utcnow() < attempt_record.lockout_until:
+            # Still locked out - calculate time remaining
+            time_remaining = attempt_record.lockout_until - datetime.utcnow()
+            seconds_remaining = int(time_remaining.total_seconds())
+            minutes_remaining = seconds_remaining // 60
+            seconds_part = seconds_remaining % 60
+
+            if minutes_remaining > 0:
+                time_str = f"{minutes_remaining} minute{'s' if minutes_remaining != 1 else ''} and {seconds_part} second{'s' if seconds_part != 1 else ''}"
+            else:
+                time_str = f"{seconds_part} second{'s' if seconds_part != 1 else ''}"
+
+            return jsonify({
+                "message": f"Too many failed login attempts. Please wait {time_str} before trying again.",
+                "lockoutUntil": attempt_record.lockout_until.isoformat(),
+                "secondsRemaining": seconds_remaining
+            }), 429
+        else:
+            # Lockout period has expired - reset the attempt record
+            attempt_record.failed_attempts = 0
+            attempt_record.lockout_until = None
+            db.session.commit()
+
+    # Verify password (we know user exists at this point)
+    if not check_password_hash(user.password, password):
+        # Failed login - increment attempt counters (both user and IP)
+        if not attempt_record:
+            attempt_record = LoginAttempt(username=tracking_identifier, failed_attempts=0)
+            db.session.add(attempt_record)
+
+        attempt_record.failed_attempts += 1
+        attempt_record.last_attempt = datetime.utcnow()
+
+        # Also track IP-based attempts
+        if not ip_attempt_record:
+            ip_attempt_record = LoginAttemptByIP(ip_address=client_ip, failed_attempts=0)
+            db.session.add(ip_attempt_record)
+
+        ip_attempt_record.failed_attempts += 1
+        ip_attempt_record.last_attempt = datetime.utcnow()
+
+        # Check if IP should be locked out
+        if ip_attempt_record.failed_attempts >= MAX_IP_LOGIN_ATTEMPTS:
+            ip_attempt_record.lockout_until = datetime.utcnow() + timedelta(minutes=IP_LOCKOUT_DURATION_MINUTES)
+
+        remaining_attempts = MAX_LOGIN_ATTEMPTS - attempt_record.failed_attempts
+
+        # Check if we should lock out the user account
+        if attempt_record.failed_attempts >= MAX_LOGIN_ATTEMPTS:
+            attempt_record.lockout_until = datetime.utcnow() + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+            db.session.commit()
+            return jsonify({
+                "message": f"Too many failed login attempts. Your account has been locked for {LOCKOUT_DURATION_MINUTES} minute{'s' if LOCKOUT_DURATION_MINUTES != 1 else ''}.",
+                "lockoutUntil": attempt_record.lockout_until.isoformat(),
+                "secondsRemaining": LOCKOUT_DURATION_MINUTES * 60
+            }), 429
+
+        db.session.commit()
+        return jsonify({
+            "message": f"Invalid credentials. {remaining_attempts} attempt{'s' if remaining_attempts != 1 else ''} remaining.",
+            "attemptsRemaining": remaining_attempts
+        }), 401
+
+    # Successful login - reset attempt counters (both user and IP)
+    if attempt_record:
+        db.session.delete(attempt_record)
+    if ip_attempt_record:
+        db.session.delete(ip_attempt_record)
+    db.session.commit()
 
     token = create_access_token(identity=str(user.userID))
 

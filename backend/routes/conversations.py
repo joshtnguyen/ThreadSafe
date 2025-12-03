@@ -7,9 +7,10 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import and_, func, or_
 
 from ..database import db
-from ..models import Contact, Message, User, PublicKey
+from ..models import Contact, Message, User, PublicKey, MessageRateLimit
 from ..websocket_helper import emit_new_message, emit_message_edited, emit_message_unsent, emit_message_saved
 from ..encryption.message_crypto import encrypt_message_for_user
+import json
 
 conversations_bp = Blueprint("conversations", __name__)
 
@@ -17,9 +18,87 @@ DEFAULT_MESSAGE_RETENTION_HOURS = 24  # 24 hours default
 MIN_MESSAGE_RETENTION_HOURS = 15 / 3600  # 15 seconds
 MAX_MESSAGE_RETENTION_HOURS = 72  # 72 hours (3 days)
 
+# Message rate limiting configuration
+MAX_MESSAGES_PER_MINUTE = 40  # Maximum messages per minute
+WARNING_THRESHOLD = 20  # Warn after 20 messages in 30 seconds
+WARNING_WINDOW_SECONDS = 30  # 30 second window for warning
+COOLDOWN_DURATION_SECONDS = 60  # 60 second cooldown after hitting limit
+
 
 def _current_user_id() -> int:
     return int(get_jwt_identity())
+
+
+def check_message_rate_limit(user_id: int):
+    """
+    Check if user is allowed to send a message based on rate limiting.
+
+    Returns: tuple of (allowed: bool, error_response: dict | None, warning: str | None)
+    """
+    now = datetime.utcnow()
+
+    # Get or create rate limit record
+    rate_limit = MessageRateLimit.query.filter_by(userID=user_id).first()
+
+    if not rate_limit:
+        rate_limit = MessageRateLimit(userID=user_id, message_timestamps="[]")
+        db.session.add(rate_limit)
+        db.session.flush()
+
+    # Check if user is in cooldown
+    if rate_limit.cooldown_until and now < rate_limit.cooldown_until:
+        seconds_remaining = int((rate_limit.cooldown_until - now).total_seconds())
+        return (False, {
+            "message": f"You're sending messages too quickly. Please wait {seconds_remaining} seconds before sending another message.",
+            "cooldownUntil": rate_limit.cooldown_until.isoformat(),
+            "secondsRemaining": seconds_remaining
+        }, None)
+
+    # Parse timestamps (stored as JSON array)
+    try:
+        timestamps = json.loads(rate_limit.message_timestamps) if rate_limit.message_timestamps else []
+    except:
+        timestamps = []
+
+    # Convert string timestamps to datetime objects
+    timestamps = [datetime.fromisoformat(ts) for ts in timestamps if ts]
+
+    # Remove timestamps older than 1 minute
+    cutoff_time = now - timedelta(minutes=1)
+    recent_timestamps = [ts for ts in timestamps if ts > cutoff_time]
+
+    # Check if user has exceeded the limit
+    if len(recent_timestamps) >= MAX_MESSAGES_PER_MINUTE:
+        # Apply cooldown
+        rate_limit.cooldown_until = now + timedelta(seconds=COOLDOWN_DURATION_SECONDS)
+        rate_limit.message_timestamps = "[]"  # Reset timestamps
+        db.session.commit()
+
+        return (False, {
+            "message": f"You've reached the message limit of {MAX_MESSAGES_PER_MINUTE} messages per minute. Please wait {COOLDOWN_DURATION_SECONDS} seconds.",
+            "cooldownUntil": rate_limit.cooldown_until.isoformat(),
+            "secondsRemaining": COOLDOWN_DURATION_SECONDS
+        }, None)
+
+    # Add current timestamp first
+    recent_timestamps.append(now)
+
+    # Check for warning threshold (20 messages in 30 seconds, including current message)
+    warning_cutoff = now - timedelta(seconds=WARNING_WINDOW_SECONDS)
+    very_recent_timestamps = [ts for ts in recent_timestamps if ts > warning_cutoff]
+
+    warning_message = None
+    if len(very_recent_timestamps) >= WARNING_THRESHOLD:
+        # Issue warning
+        remaining = MAX_MESSAGES_PER_MINUTE - len(recent_timestamps)
+        warning_message = f"Slow down! You have {remaining} messages remaining before cooldown."
+        rate_limit.last_warning = now
+
+    # Save updated timestamps
+    rate_limit.message_timestamps = json.dumps([ts.isoformat() for ts in recent_timestamps])
+    db.session.commit()
+
+    return (True, None, warning_message)
 
 
 def _message_expiry_for_user(user: User | None) -> datetime:
@@ -385,6 +464,11 @@ def create_message(conversation_id: int):
     """Add a new message to a conversation (conversation_id is the receiver's user ID)."""
     current_user_id = _current_user_id()
 
+    # Check message rate limit
+    allowed, error_response, warning = check_message_rate_limit(current_user_id)
+    if not allowed:
+        return jsonify(error_response), 429
+
     # Verify the receiver exists and is a contact
     receiver = User.query.get(conversation_id)
     if not receiver:
@@ -524,8 +608,12 @@ def create_message(conversation_id: int):
     # Emit real-time message to receiver via WebSocket
     emit_new_message(conversation_id, message.to_dict(conversation_id))
 
-    # Return message to sender
-    return jsonify({"message": message.to_dict(current_user_id)}), 201
+    # Return message to sender, including rate limit warning if present
+    response_data = {"message": message.to_dict(current_user_id)}
+    if warning:
+        response_data["warning"] = warning
+
+    return jsonify(response_data), 201
 
 
 @conversations_bp.patch("/<int:conversation_id>/messages/<int:message_id>/status")
